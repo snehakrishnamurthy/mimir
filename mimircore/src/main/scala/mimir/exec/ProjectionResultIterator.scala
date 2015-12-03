@@ -136,7 +136,7 @@ class ProjectionResultIterator(
     expr match {
       case Var(v) =>
         v match {
-          case CTables.SEED_EXP => Var(v)
+          case CTables.SEED_EXP | CTables.TEMPORAL_VAR=> Var(v)
           case _ => {
             val idx =
               src.schema.indexWhere(

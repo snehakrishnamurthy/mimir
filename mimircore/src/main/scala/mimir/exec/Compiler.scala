@@ -168,6 +168,14 @@ class Compiler(db: Database) {
                   }
                 }
 
+                case Function(CTables.PREDICT, subexp) => {
+                  if(subexp.isEmpty)
+                    throw new SQLException("PREDICT() expects 1 argument " +
+                      "(time), got " + subexp.length)
+                  val predicted = Function(CTables.PREDICT, subexp)
+                  List(ProjectArg(name + "_PREDICTED", predicted))
+                }
+
                 case _ => List(ProjectArg(name, expr))
               }
           },

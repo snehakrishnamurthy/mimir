@@ -20,7 +20,6 @@ class SchemaMatchingLens(name: String, args: List[Expression], source: Operator)
   var model: Model = null
 
   def init() = {
-    println("args: "+args+"; "+ args.length)
     if (args.length % 2 != 0)
       throw new SQLException("Incorrect parameters for " + lensType + " Lens")
     if (targetSchema == null) {

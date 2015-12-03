@@ -50,6 +50,8 @@ class LensManager(db: Database) {
         new SchemaMatchingLens(lensName, args, source)
       case "TYPE_INFERENCE" =>
         new TypeInferenceLens(lensName, args, source)
+      case "TEMPORAL" =>
+        new TemporalLens(lensName, args, source)
     }
   }
 
@@ -59,6 +61,7 @@ class LensManager(db: Database) {
       case _: MissingValueLens => "MISSING_VALUE"
       case _: SchemaMatchingLens => "SCHEMA_MATCHING"
       case _: TypeInferenceLens => "TYPE_INFERENCE"
+      case _: TemporalLens => "TEMPORAL"
     }
   }
 

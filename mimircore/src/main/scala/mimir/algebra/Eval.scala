@@ -147,6 +147,12 @@ object Eval
                 case e: TypeException => new NullPrimitive()
               }
             }
+            case CTables.PREDICT => {
+              val bindings = Map[String, StringPrimitive](
+                CTables.TEMPORAL_VAR -> params(0).asInstanceOf[StringPrimitive]
+              )
+              Eval.eval(params(1), bindings)
+            }
           }
         }
       }

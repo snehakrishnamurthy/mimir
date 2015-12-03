@@ -38,8 +38,10 @@ object CTables
   val ROW_PROBABILITY = "PROB"
   val VARIANCE = "VAR"
   val CONFIDENCE = "CONFIDENCE"
+  val PREDICT = "PREDICT"
 
   val SEED_EXP = "__SEED"
+  val TEMPORAL_VAR = "__TEMPVAR"
 
   /**
    * Default name for a condition column

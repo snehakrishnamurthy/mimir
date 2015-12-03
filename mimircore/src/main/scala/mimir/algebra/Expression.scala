@@ -364,7 +364,7 @@ case class Function(op: String, params: List[Expression]) extends Expression {
     op match {
       case "JOIN_ROWIDS" => TRowId
       case CTables.ROW_PROBABILITY => TString
-      case CTables.VARIANCE | CTables.CONFIDENCE => TFloat
+      case CTables.VARIANCE | CTables.CONFIDENCE | CTables.PREDICT=> TFloat
       case "__LIST_MIN" | "__LIST_MAX" => TFloat
       case "__LEFT_UNION_ROWID" | "__RIGHT_UNION_ROWID" => TRowId
       case _ => 
