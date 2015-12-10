@@ -95,6 +95,8 @@ class TemporalModel(lens: TemporalLens) extends Model {
     val colSet = collection.mutable.HashSet[Double]()
     val data: Instances = new Instances("data", attributes, 100)
     var t0: Long = -1
+    //TODO check this
+    iterator.getNext()
     while(iterator.getNext()){
       val instance = new DenseInstance(iterator.numCols)
       instance.setDataset(data)
@@ -112,10 +114,9 @@ class TemporalModel(lens: TemporalLens) extends Model {
                 if(t0 == -1){
                   println("t0 => " + iterator(j).asString)
                   t0 = util.Date.parse(iterator(j).asString)
-                }
-                else {
+                } else {
                   println("t1 => " + iterator(j).asString)
-                  timeDiff = 6000//util.Date.parse(iterator(j).asString) - t0
+                  timeDiff = util.Date.parse(iterator(j).asString) - t0
                 }
               }
             }
@@ -135,15 +136,20 @@ class TemporalModel(lens: TemporalLens) extends Model {
     transition = t
     emission = e
 
-    println("before normaliztion")
-    println("transition")
-    transition.foreach(a => {a.foreach(b => print(b + " ")); println("")})
-    println("emission")
-    emission.foreach(a => {a.foreach(b => print(b + " ")); println("")})
-    println("normalization starting")
-
-    transition.map(a => a.map(b => b/a.sum))
-    emission.map(a => a.map(b => b/a.sum))
+    for(i <- transition.indices){
+      val t = transition(i)
+      val ts = t.sum
+      for(j <- t.indices)
+        if(ts != 0)
+          t(j) = t(j)/ts
+    }
+    for(i <- emission.indices){
+      val t = emission(i)
+      val ts = t.sum
+      for(j <- t.indices)
+        if(ts != 0)
+          t(j) = t(j)/ts
+    }
     forwardStep(data, eval.getNumClusters)
     iterator.close()
 
@@ -155,20 +161,29 @@ class TemporalModel(lens: TemporalLens) extends Model {
     transition.foreach(a => {a.foreach(b => print(b + " ")); println("")})
     println("emission")
     emission.foreach(a => {a.foreach(b => print(b + " ")); println("")})
+    print("observations ")
     println(observations)
-    println(alpha)
-    println(timeIdx)
+    print("alpha ")
+    alpha.foreach(a => print(a + " "))
   }
 
   def forwardStep(data: Instances, stateCount: Int): Unit = {
-    var dist = new Matrix(Array.fill[Double](1, stateCount)(1/stateCount))
+    println("-----------------")
+    var dist = new Matrix(Array.fill[Double](1, stateCount)(1.0/stateCount))
     val transitionMat = new Matrix(transition)
-    for(i <- 0 to data.size()-1){
+    for(i <- 0 until data.size()){
       val o = observations.indexOf(data.get(i).value(colIdx))
       val transitionRow: Array[Array[Double]] = Array[Array[Double]](emission(o))
       val emissionRow = new Matrix(transitionRow)
+      //
+      println("dist")
+      dist.getArray.foreach(a => {a.foreach(b => print(b + " ")); println("")})
+      println("emission")
+      emissionRow.getArray.foreach(a => {a.foreach(b => print(b + " ")); println("")})
+      //
       dist = dist.times(transitionMat).arrayTimes(emissionRow)
     }
+    println("-----------------")
     alpha = dist.getArray()(0)
   }
 
@@ -205,7 +220,8 @@ class TemporalModel(lens: TemporalLens) extends Model {
       n += 1
     }
     dist = dist.times(emissionMat.transpose())
-    val res = dist.getArray()(0).max
+    val max = dist.getArray()(0).max
+    val res = observations(dist.getArray()(0).indexOf(max))
     FloatPrimitive(res)
   }
 
