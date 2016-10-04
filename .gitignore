@@ -18,6 +18,7 @@ project/plugins/project/
 
 # Sublime-Text
 Mimir.sublime-workspace
+.tags*
 
 #IDE
 .idea/
