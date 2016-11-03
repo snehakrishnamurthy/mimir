@@ -168,7 +168,7 @@ class CTExplainer(db: Database) extends LazyLogging {
 		        		bindings ++ Map("__SEED" -> IntPrimitive(rnd.nextInt()))
 		        	)
 		        } catch {
-		        	case TypeException(_,_,_) => NullPrimitive()
+		        	case _:TypeException => NullPrimitive()
 		        }
         	).
 	        foldLeft(init)(accum)
@@ -215,7 +215,7 @@ class CTExplainer(db: Database) extends LazyLogging {
 	def getFocusedReasons(expr: Expression):
 		List[Reason] =
 	{
-		// println("REASONS: " + expr.toString)
+		logger.trace(s"GETTING REASONS: $expr")
 		expr match {
 			case v: VGTerm => List(v.reason)
 
@@ -242,9 +242,11 @@ class CTExplainer(db: Database) extends LazyLogging {
 		}
 	}
 
-	def getProvenance(oper: Operator, token: RowIdPrimitive): 
+	def getProvenance(rawOper: Operator, token: RowIdPrimitive): 
 		(Map[String,PrimitiveValue], Map[String, Expression], Expression) =
 	{
+		val oper = ResolveViews(db, rawOper)
+
 		// Annotate the query to produce a provenance trace
 		val (provQuery, rowIdCols) = Provenance.compile(oper)
 
@@ -272,13 +274,13 @@ class CTExplainer(db: Database) extends LazyLogging {
 
 		val baseData = JDBCUtils.extractAllRows(results, finalSchema.map(_._2))
 
-		if(baseData.size != 1){
+		if(!baseData.hasNext){
 			val resultRowString = baseData.map( _.mkString(", ") ).mkString("\n")
 			logger.debug(s"Results: $resultRowString")
 			throw new InvalidProvenance(""+baseData.size+" rows for token", token)
 		}	
 
-		val tuple = finalSchema.map(_._1).zip(baseData(0)).toMap
+		val tuple = finalSchema.map(_._1).zip(baseData.next).toMap
 
 		(tuple, columnExprs, rowCondition)
 	}

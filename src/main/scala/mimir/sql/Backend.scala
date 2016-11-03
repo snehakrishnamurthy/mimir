@@ -10,7 +10,7 @@ abstract class Backend {
   def open(): Unit
 
   def execute(sel: String): ResultSet
-  def execute(sel: String, args: List[String]): ResultSet
+  def execute(sel: String, args: List[PrimitiveValue]): ResultSet
   def execute(sel: Select): ResultSet = {
     execute(sel.toString());
   }
@@ -19,34 +19,21 @@ abstract class Backend {
     sel.setSelectBody(selB);
     return execute(sel);
   }
-  def resultRows(sel: String) = 
+  def resultRows(sel: String):Iterator[List[PrimitiveValue]] = 
     JDBCUtils.extractAllRows(execute(sel))
-  def resultRows(sel: String, args: List[String]) =
+  def resultRows(sel: String, args: List[PrimitiveValue]):Iterator[List[PrimitiveValue]] =
     JDBCUtils.extractAllRows(execute(sel, args))
-  def resultRows(sel: Select) =
+  def resultRows(sel: Select):Iterator[List[PrimitiveValue]] =
     JDBCUtils.extractAllRows(execute(sel))
-  def resultRows(sel: SelectBody) =
+  def resultRows(sel: SelectBody):Iterator[List[PrimitiveValue]] =
     JDBCUtils.extractAllRows(execute(sel))
   
   def getTableSchema(table: String): Option[List[(String, Type.T)]]
-  def getTableOperator(table: String): Operator =
-    getTableOperator(table, List[(String,Expression,Type.T)]())
-  def getTableOperator(table: String, metadata: List[(String, Expression, Type.T)]):
-    Operator =
-  {
-    Table(
-      table, 
-      getTableSchema(table) match {
-        case Some(x) => x
-        case None => throw new SQLException("Table does not exist in db!")
-      },
-      metadata
-    )
-  }
+
   
   def update(stmt: String): Unit
   def update(stmt: List[String]): Unit
-  def update(stmt: String, args: List[String]): Unit
+  def update(stmt: String, args: List[PrimitiveValue]): Unit
 
   def getAllTables(): List[String]
 

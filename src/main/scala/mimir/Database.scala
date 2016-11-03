@@ -10,8 +10,9 @@ import mimir.ctables.{CTExplainer, CTPercolator, CellExplanation, Model, RowExpl
 import mimir.exec.{Compiler, ResultIterator, ResultSetIterator}
 import mimir.lenses.{Lens, LensManager, BestGuessCache}
 import mimir.parser.OperatorParser
-import mimir.sql._
-import mimir.util.LoadCSV
+import mimir.sql.{SqlToRA,RAToSql,Backend,CreateLens}
+import mimir.optimizer.{InlineVGTerms, ResolveViews}
+import mimir.util.{LoadCSV,ExperimentalOptions}
 import mimir.web.WebIterator
 import mimir.parser.MimirJSqlParser
 
@@ -98,6 +99,14 @@ case class Database(name: String, backend: Backend)
   }
 
   /**
+   * Make an educated guess about what the query's schema should be
+   */
+  def bestGuessSchema(oper: Operator): List[(String, Type.T)] =
+  {
+    InlineVGTerms(ResolveViews(this, oper)).schema
+  }
+
+  /**
    * Parse raw SQL data
    */
   def parse(queryString: String): List[Statement] =
@@ -118,56 +127,42 @@ case class Database(name: String, backend: Backend)
    */
   def dump(result: ResultIterator): Unit =
   {
-    println(result.schema.map( _._1 ).mkString(","))
-    println("------")
-    while(result.getNext()){
-      println(
-        (0 until result.numCols).map( (i) => {
-          if( i == 0 ){
-            result(i) match {
-              case NullPrimitive() => "'NULL'"
-              case _ => result(i)
+    ExperimentalOptions.ifEnabled("SILENT-TEST", () => {
+      var x = 0
+      while(result.getNext()){ x += 1; if(x % 10000 == 0) {println(s"$x rows")} }
+      val missingRows = result.missingRows()
+      println(s"Total $x rows; Missing: $missingRows")
+    }, () => {
+      println(result.schema.map( _._1 ).mkString(","))
+      println("------")
+      while(result.getNext()){
+        println(
+          (0 until result.numCols).map( (i) => {
+            if( i == 0 ){
+              result(i) match {
+                case NullPrimitive() => "'NULL'"
+                case _ => result(i)
+              }
+
+            }
+            else{
+              result(i)+(
+                if(!result.deterministicCol(i)){ "*" } else { "" }
+                )
             }
 
-          }
-          else{
-            result(i)+(
-              if(!result.deterministicCol(i)){ "*" } else { "" }
-              )
-          }
-
-        }).mkString(",")+(
-          if(!result.deterministicRow){
-            " (This row may be invalid)"
-          } else { "" }
-          )
-      )
-    }
-    if(result.missingRows()){
-      println("( There may be missing result rows )")
-    }
-
-//    isNullCheck()
-
-  }
-
-  def isNullCheck(): Unit ={
-    if(IsNullChecker.getIsNull()){ // is NULL is in there so check
-
-      if(IsNullChecker.getDB() == null){
-        IsNullChecker.setDB(this)
+          }).mkString(",")+(
+            if(!result.deterministicRow){
+              " (This row may be invalid)"
+            } else { "" }
+            )
+        )
       }
-
-      if(IsNullChecker.isNullCheck()){
-
+      if(result.missingRows()){
+        println("( There may be missing result rows )")
       }
-      else{
-        println("IS NULL HAS PROBLEMS")
-        IsNullChecker.problemRows();
-      }
+    })
 
-    }
-    IsNullChecker.reset()
   }
 
   /**
@@ -238,18 +233,29 @@ case class Database(name: String, backend: Backend)
    * Look up the schema for the table with the provided name.
    */
   def getTableSchema(name: String): Option[List[(String,Type.T)]] =
-    backend.getTableSchema(name)
+    backend.getTableSchema(name).
+      orElse(getView(name).map(_.schema))
   /**
    * Build a Table operator for the table with the provided name.
    */
   def getTableOperator(table: String): Operator =
-    backend.getTableOperator(table)
+    getTableOperator(table, Nil)
+
   /**
    * Build a Table operator for the table with the provided name, requesting the
    * specified metadata.
    */
   def getTableOperator(table: String, metadata: List[(String, Expression, Type.T)]): Operator =
-    backend.getTableOperator(table, metadata)
+  {
+    Table(
+      table, 
+      getTableSchema(table) match {
+        case Some(x) => x
+        case None => throw new SQLException("Table does not exist in db!")
+      },
+      metadata
+    )  
+  }
   
   /**
    * Evaluate a CREATE LENS statement.

@@ -74,7 +74,7 @@ object SqlParserSpec extends Specification with FileMatchers {
 
 	"The Sql Parser" should {
 		"Handle trivial queries" in {
-			db.backend.resultRows("SELECT * FROM R;") must be equalTo List( 
+			db.backend.resultRows("SELECT * FROM R;").toList must be equalTo List( 
 				List(IntPrimitive(1),IntPrimitive(2),IntPrimitive(3)),
 				List(IntPrimitive(1),IntPrimitive(3),IntPrimitive(1)),
 				List(IntPrimitive(2),NullPrimitive(),IntPrimitive(1)),
@@ -84,7 +84,7 @@ object SqlParserSpec extends Specification with FileMatchers {
 				List(IntPrimitive(4),IntPrimitive(2),IntPrimitive(4))
 			)
 
-			db.backend.resultRows("SELECT A FROM R;") must be equalTo List(
+			db.backend.resultRows("SELECT A FROM R;").toList must be equalTo List(
 				List(IntPrimitive(1)),
 				List(IntPrimitive(1)),
 				List(IntPrimitive(2)),
@@ -413,13 +413,12 @@ object SqlParserSpec extends Specification with FileMatchers {
 		 	db.optimize(
 		 		convert("SELECT * FROM SaneR")
 		 	) must be equalTo 
-		 		Project(List(ProjectArg("A", Var("R_A")), 
-		 					 ProjectArg("B", expr(
-		 					 	"IF R_B IS NULL THEN {{ SANER_1[ROWID] }} ELSE R_B END")),
-		 					 ProjectArg("C", Var("R_C"))
-		 				), Table("R", Map(("R_A", Type.TInt), 
-		 								  ("R_B", Type.TInt), 
-		 								  ("R_C", Type.TInt)).toList,
+		 		Project(List(ProjectArg("A", Var("SANER_A")), 
+		 					 ProjectArg("B", Var("SANER_B")),
+		 					 ProjectArg("C", Var("SANER_C"))
+		 				), Table("SANER", Map(("SANER_A", Type.TInt), 
+		 								  ("SANER_B", Type.TInt), 
+		 								  ("SANER_C", Type.TInt)).toList,
 		 							  List()
 				))
 			val guessCacheData = 
