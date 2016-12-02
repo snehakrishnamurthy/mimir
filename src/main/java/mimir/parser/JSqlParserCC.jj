@@ -154,6 +154,7 @@ SKIP:
 TOKEN: /* SQL Keywords. prefixed with K_ to avoid name clashes */
 {
     <K_AS:"AS">
+|   <K_FEEDBACK:"FEEDBACK">
 |   <K_UNCERTAIN:"UNCERTAIN">
 |   <K_ANALYZE:"ANALYZE">
 |   <K_EXPLAIN:"EXPLAIN">
@@ -260,6 +261,8 @@ Statement Statement() :
   (<EOF> { return null; })
   |
 	( 
+	stm = Feedback()
+	|
     stm = Select()
     |
     stm = CreateStatement()
@@ -284,6 +287,30 @@ Statement Statement() :
     { return stm; }
 }
 
+Feedback Feedback() :
+{
+  Feedback feedback = new Feedback();
+  Table table = null;
+  Expression where = null;
+  Column tableColumn = null;
+  List expList = new ArrayList();
+  List columns = new ArrayList();
+  Expression value = null;
+}
+{
+  <K_FEEDBACK> table = TableWithAlias();
+  <K_SET> tableColumn=Column() "=" value=SimpleExpression() { columns.add(tableColumn); expList.add(value); }
+      ("," tableColumn=Column() "=" value=SimpleExpression() { columns.add(tableColumn); expList.add(value); } )*
+   <K_WHERE> where=WhereClause() { feedback.setWhere(where); }
+  {
+      feedback.setColumns(columns);
+      update.setExpressions(expList);
+      update.setTable(table);
+      return feedback;
+  }
+  }
+}
+
 Statement CreateStatement() : 
 { Statement stm; }
 {
@@ -296,7 +323,6 @@ Statement CreateStatement() :
   )
   { return stm; }
 }
-
 
 Update Update():
 { 
