@@ -221,6 +221,7 @@ TOKEN: /* SQL Keywords. prefixed with K_ to avoid name clashes */
 |   <K_TRUNCATE:"TRUNCATE">
 |   <K_DISTINCT:"DISTINCT">
 |   <K_INTERSECT:"INTERSECT">
+|   <K_FEEDBACK:"FEEDBACK">
 }
 
 
@@ -279,6 +280,8 @@ Statement Statement() :
     stm = Drop()
     |
     stm = Truncate()
+    |
+    stm = Feedback()
     )
     (";" | <EOF>)    
     { return stm; }
@@ -297,6 +300,28 @@ Statement CreateStatement() :
   { return stm; }
 }
 
+Feedback Feedback():
+{
+  Feedback feedback = new Feedback();
+  Table table = null;
+  List onExpList = new ArrayList();
+  Expression where = null;
+  Token colIdx = null;
+  Expression value = null;
+}
+{
+  <K_FEEDBACK> table = TableWithAlias()
+  [ "," colIdx = <S_INTEGER>  { feedback.setColumnIndex(Integer.parseInt(colIdx.image)); }  ]
+  [ <K_ON> where = SimpleExpression() { onExpList.add(where); }
+    [ "," where =  SimpleExpression() { onExpList.add(where); } ]
+    { feedback.setOnExpressions(onExpList); }
+  ]
+  <K_SET> value = SimpleExpression() { feedback.setExpression(value); }
+  {
+      feedback.setTable(table);
+      return feedback;
+  }
+}
 
 Update Update():
 { 
@@ -307,7 +332,7 @@ Update Update():
 	List expList = new ArrayList(); 
 	List columns = new ArrayList(); 
 	Expression value = null;
-	
+
 }
 {
     <K_UPDATE> table=TableWithAlias()

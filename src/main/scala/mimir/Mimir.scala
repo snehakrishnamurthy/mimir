@@ -3,14 +3,12 @@ package mimir;
 import java.io._
 import java.sql.SQLException
 
-import mimir.ctables.CTPercolator
 import mimir.parser._
 import mimir.sql._
-import mimir.util.{TimeUtils,ExperimentalOptions}
-import mimir.algebra.{Project,ProjectArg,Var}
+import mimir.util.{ExperimentalOptions, TimeUtils}
 import net.sf.jsqlparser.statement.Statement
-import net.sf.jsqlparser.statement.select.Select
 import net.sf.jsqlparser.statement.drop.Drop
+import net.sf.jsqlparser.statement.select.Select
 import org.rogach.scallop._
 
 
@@ -88,6 +86,7 @@ object Mimir {
           case sel:  Select     => handleSelect(sel)
           case crel: CreateLens => db.createLens(crel)
           case expl: Explain    => handleExplain(expl)
+          case feed: Feedback   => handleFeedback(feed)
           case drop: Drop       => handleDrop(drop)
           case _                => db.backend.update(stmt.toString())
         }
@@ -106,6 +105,7 @@ object Mimir {
     } while(!done)
   }
 
+  def handleFeedback(feedback: Feedback): Unit = { println(feedback)}
   def handleExplain(explain: Explain): Unit = {
     val raw = db.sql.convert(explain.getSelectBody())
     println("------ Raw Query ------")
