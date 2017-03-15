@@ -33,6 +33,17 @@ object CureScenario
       true
     }
 
+    "Select from the source table" >> {
+      time("Type Inference Query", 
+        () => {
+          query("""
+            SELECT * FROM cureSource;
+          """).foreachRow((x) => {})
+        }
+      )
+      ok
+    }
+
     "CURE Timing Tests" >> {
       time("Type Inference Query",
              () => {
