@@ -8,7 +8,7 @@ import mimir.test._
 import mimir.util._
 
 object CureScenario
-  extends SQLTestSpecification("CureScenario",  Map("reset" -> "YES"))
+  extends SQLTestSpecification("CureScenario",  Map("reset" -> "NO"))
 {
 
   val dataFiles = List(
@@ -34,6 +34,55 @@ object CureScenario
         ok
       }
     }}
+    "Run the CURE Lenses" >> {
+      System.out.println("Running CURE query")
+      time("CURE TI Query",
+        () => {
+          update("CREATE LENS CURE_TI AS SELECT * FROM CURESOURCE_RAW WITH TYPE_INFERENCE(0.6);")
+        }
+      )
+      time("CURE MV Query",
+        () => {
+          update("CREATE LENS CURE_MV AS SELECT * FROM CURE_TI WITH MISSING_VALUE('IMO_CODE');")
+        }
+      )
+      ok
+    }
+
+
+
+/*
+    "Run the CURE Query" >> {
+      System.out.println("Running CURE query")
+      time("CURE Query",
+        () => {
+          update("""
+                          CREATE LENS CURE_TI AS
+                    SELECT
+                            BILL_OF_LADING_NBR,
+                            SRC.IMO_CODE           AS "SRC_IMO",
+                            LOC.LAT                AS "VESSEL_LAT",
+                            LOC.LON                AS "VESSEL_LON",
+                            PORTS.LAT              AS "PORT_LAT",
+                            PORTS.LON              AS "PORT_LON",
+                            DATE(SRC.DATE)          AS "SRC_DATE",
+                            DST(LOC.LAT, LOC.LON, PORTS.LAT, PORTS.LON) AS "DISTANCE",  SPEED(DST(LOC.LAT, LOC.LON, PORTS.LAT, PORTS.LON), SRC.DATE, NULL) AS "SPEED"
+                          FROM CURESOURCE_RAW AS SRC
+                           LEFT JOIN CURELOCATIONS_RAW AS LOC ON SRC.IMO_CODE = LOC.IMO_CODE
+                            LEFT OUTER JOIN CUREPORTS_RAW AS PORTS ON SRC.PORT_OF_ARRIVAL = PORTS.PORT
+
+                           WITH TYPE_INFERENCE(0.8)
+                          ;
+                 """)
+        }
+
+        //         failed type detection --> run type inferencing
+        //         --> repair with repairing tool
+      )
+      ok
+    }
+*/
+
 
     "Select from the source table" >> {
       time("Type Inference Query", 
@@ -89,31 +138,6 @@ object CureScenario
 */
 
 //    true
-     "Run the CURE Query" >> {
-       time("CURE Query",
-         () => {
-           query("""
-             SELECT
-                     BILL_OF_LADING_NBR,
-                     SRC.IMO_CODE           AS "SRC_IMO",
-                     LOC.LAT                AS "VESSEL_LAT",
-                     LOC.LON                AS "VESSEL_LON",
-                     PORTS.LAT              AS "PORT_LAT",
-                     PORTS.LON              AS "PORT_LON",
-                     DATE(SRC.DATE)          AS "SRC_DATE",
-                     DST(LOC.LAT, LOC.LON, PORTS.LAT, PORTS.LON) AS "DISTANCE",  SPEED(DST(LOC.LAT, LOC.LON, PORTS.LAT, PORTS.LON), SRC.DATE, NULL) AS "SPEED"
-                   FROM CURESOURCE_RAW AS SRC
-                    JOIN CURELOCATIONS_RAW AS LOC ON SRC.IMO_CODE = LOC.IMO_CODE
-                     LEFT OUTER JOIN CUREPORTS_RAW AS PORTS ON SRC.PORT_OF_ARRIVAL = PORTS.PORT
-                   ;
-           """).foreachRow((x) => {})
-         }
-
-//         failed type detection --> run type inferencing
-//         --> repair with repairing tool
-       )
-       ok
-     }
 
     /*
 SELECT
