@@ -141,41 +141,50 @@ class CTExplainer(db: Database) extends LazyLogging {
 	def explainCell(oper: Operator, token: RowIdPrimitive, column: String): CellExplanation =
 	{
 		logger.debug(s"ExplainCell INPUT: $oper")
-		val (tuple, allExpressions, _) = getProvenance(oper, token)
-		logger.debug(s"ExplainCell Provenance: $allExpressions")
-		val expr = allExpressions.get(column).get
-		val colType = Typechecker.typeOf(InlineVGTerms(expr), tuple.mapValues( _.getType ))
-
-		val examples = 
-			sampleExpression[List[PrimitiveValue]](
-				expr, tuple, NUM_EXAMPLE_TRIALS, 
-				List[PrimitiveValue](), 
-				(_++List(_)) 
-			).toSet.take(NUM_FINAL_EXAMPLES)
-
-		colType match {
-			case (TInt() | TFloat()) =>
-				val (avg, stddev) = getStats(expr, tuple, NUM_SAMPLES)
-
-				NumericCellExplanation(
-					avg, 
-					stddev, 
-					examples.toSet.toList,
-					getFocusedReasons(expr, tuple).values.toList,
-					token, 
-					column
-				)
-
-			case _ => 
-				GenericCellExplanation(
-					examples.toSet.toList,
-					getFocusedReasons(expr, tuple).values.toList,
-					token,
-					column
-				)
-		}
+		try {
+		  val (tuple, allExpressions, _) = getProvenance(oper, token)
+  		logger.debug(s"ExplainCell Provenance: $allExpressions")
+  		val expr = allExpressions.get(column).get
+  		val colType = Typechecker.typeOf(InlineVGTerms(expr), tuple.mapValues( _.getType ))
+  
+  		val examples = 
+  			sampleExpression[List[PrimitiveValue]](
+  				expr, tuple, NUM_EXAMPLE_TRIALS, 
+  				List[PrimitiveValue](), 
+  				(_++List(_)) 
+  			).toSet.take(NUM_FINAL_EXAMPLES)
+    
+  		colType match {
+  			case (TInt() | TFloat()) =>
+  				val (avg, stddev) = getStats(expr, tuple, NUM_SAMPLES)
+  
+  				NumericCellExplanation(
+  					avg, 
+  					stddev, 
+  					examples.toSet.toList,
+  					getFocusedReasons(expr, tuple).values.toList,
+  					token, 
+  					column
+  				)
+  
+  			case _ => 
+  				GenericCellExplanation(
+  					examples.toSet.toList,
+  					getFocusedReasons(expr, tuple).values.toList,
+  					token,
+  					column
+  				)
+  		}
+		 } catch {
+				case x:RAException => GenericCellExplanation(
+  					List(),
+  					List(new ModelReason(new NoOpModel("explainCell:Exception",x.getMessage) ,0, Seq(StringPrimitive(x.getMessage)), Seq())),
+  					token,
+  					column
+  				)
+			}
 	}
-
+	
 	def sampleExpression[A](
 		expr: Expression, bindings: Map[String,PrimitiveValue], count: Int, 
 		init: A, accum: ((A, PrimitiveValue) => A)

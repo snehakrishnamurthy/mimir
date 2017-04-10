@@ -53,7 +53,9 @@ class LensManager(db: Database) {
     }
 
     // Populate the best-guess cache
-    //db.bestGuessCache.buildCache(view)
+    if(db.backend.canHandleVGTerms()){
+      db.bestGuessCache.buildCache(view)
+    }
   }
 
   def drop(name: String): Unit =

@@ -83,6 +83,12 @@ libraryDependencies ++= Seq(
   //////////////////////// JDBC Backends //////////////////////
   "org.xerial"                    %   "sqlite-jdbc"           % "3.16.1",
 
+ /////////////////////// SparkSQL Backends ///////////////////
+ "org.apache.spark"				  %%  "spark-core"			  % "2.1.0",
+ "org.apache.spark" 			  %% "spark-sql" 			  % "2.1.0",
+ "org.apache.spark" 			  %% "spark-hive" 			  % "2.1.0",
+ "org.scala-lang" 				  %   "scala-reflect" 		  % scalaVersion.value,
+ 
 
   ///////////////////  GProM/Native Integration //////////////
   "net.java.dev.jna"              %    "jna"                  % "4.2.2",

@@ -105,10 +105,7 @@ object MissingKeyLens {
                     Project(projArgsRight, Table(rTalebName,"rght",keys,List())), 
                     Comparison(Cmp.Eq, Var("rght_"+keys.head._1), Var("lft_"+keys.head._1))
                   ))
-      println(missingKeysOper)
       val sql = db.ra.convert(missingKeysOper)
-      println(sql)
-      //val missingKeysSch = missingKeysOper.schema
       val results = new mimir.exec.ResultSetIterator(db.backend.execute(sql), 
         keys.toMap,
         keys.zipWithIndex.map(_._2), 
@@ -116,7 +113,6 @@ object MissingKeyLens {
       )
       val createMissingKeysTableSql = s"CREATE TABLE $missingKeysTableName(${keys.map(kt => kt._1 +" "+ kt._2.toString()).mkString(",")})"
       db.update(db.stmt(createMissingKeysTableSql))
-      //db.update(db.stmt(s"INSERT INTO $missingKeysTableName $sql"))
       db.backend.fastUpdateBatch(s"INSERT INTO $missingKeysTableName VALUES(${keys.map(kt => "?").mkString(",")})", results.allRows())
     
     }
@@ -139,7 +135,6 @@ object MissingKeyLens {
       if(sortCols.isEmpty) allOrMissingOper;
       else Sort(sortCols, allOrMissingOper);
     }
-    println(oper)
     (
       oper,
       Seq(model)

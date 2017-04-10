@@ -19,6 +19,9 @@ import py4j.GatewayServer
 import mimir.provenance.Provenance
 import net.sf.jsqlparser.statement.select.SelectBody
 import mimir.algebra._
+import mimir.optimizer.InlineVGTerms
+import mimir.ctables.VGTerm
+import mimir.models.Model
 
 /**
  * The primary interface to Mimir.  Responsible for:
@@ -46,13 +49,13 @@ object MimirVizier {
     ExperimentalOptions.enable(conf.experimental())
     
     // Set up the database connection(s)
-    db = new Database(new JDBCBackend(conf.backend(), conf.dbname()))//new GProMBackend(conf.backend(), conf.dbname(), -1))    
+    db = new Database(/*new SparkSQLBackend())*/new JDBCBackend(conf.backend(), conf.dbname()))//new GProMBackend(conf.backend(), conf.dbname(), -1))    
     db.backend.open()
 
     db.initializeDBForMimir();
 
     if(ExperimentalOptions.isEnabled("INLINE-VG")){
-        db.backend.asInstanceOf[JDBCBackend].enableInlining(db)
+        db.backend.asInstanceOf[JDBCBackend/*SparkSQLBackend*/].enableInlining(db)
       }
     
     runServerForViztrails()
@@ -101,12 +104,12 @@ object MimirVizier {
      while(true){
        Thread.sleep(90000)
        if(pythonCallThread != null){
-         println("Python Call Thread Stack Trace: ---------v ")
-         pythonCallThread.getStackTrace.foreach(ste => println(ste.toString()))
+         //println("Python Call Thread Stack Trace: ---------v ")
+         //pythonCallThread.getStackTrace.foreach(ste => println(ste.toString()))
        }
        pythonMimirCallListeners.foreach(listener => {
        
-          println(listener.callToPython("knock knock, jvm here"))
+          //println(listener.callToPython("knock knock, jvm here"))
          })
      }
      
@@ -216,10 +219,77 @@ object MimirVizier {
       println("explainCell: From Vistrails: [" + col + "] [ "+ row +" ] [" + query + "]"  ) ;
       val oper = db.sql.convert(db.parse(query).head.asInstanceOf[Select])
       val cols = oper.schema.map(f => f._1)
-      db.explainCell(oper, RowIdPrimitive(row.toString()), cols(col)).toString()
+      //db.explainCell(oper, RowIdPrimitive(row.toString()), cols(col)).toString()
+      db.explainer.explainSubset(oper, Set(cols(col)), false, false).mkString(",\n")
     }
     println(s"explainCell Took: ${timeRes._2}")
     timeRes._1
+  }
+  
+  def explainRow(query: String, row:Int) : String = {
+    val timeRes = time {
+      println("explainRow: From Vistrails: [ "+ row +" ] [" + query + "]"  ) ;
+      val oper = db.sql.convert(db.parse(query).head.asInstanceOf[Select])
+      val cols = oper.schema.map(f => f._1)
+      db.explainRow(oper, RowIdPrimitive(row.toString())).toString()
+    }
+    println(s"explainRow Took: ${timeRes._2}")
+    timeRes._1
+  }
+  
+  def feedbackCell(query: String, col:Int, row:Int, feedback:String) : String = {
+    val timeRes = time {
+      println("acknoledgeCell: From Vistrails: [" + col + "] [ "+ row +" ] [" + query + "]"  ) ;
+      val oper = db.sql.convert(db.parse(query).head.asInstanceOf[Select])
+      val cols = oper.schema.map(f => f._1)
+      val token = RowIdPrimitive(row.toString())
+      val column = cols(col)
+      try {
+  		  val (tuple, allExpressions, _) = db.explainer.getProvenance(oper, token)
+    		val expr = allExpressions.get(column).get
+    		val colType = Typechecker.typeOf(InlineVGTerms(expr), tuple.mapValues( _.getType ))
+        val colMap = allExpressions.keys.zip(tuple.keys).toMap
+        val feedBackModels = getModelsToFeedbackFor(expr, tuple)
+        for(model <- feedBackModels){
+          model.feedback(0, List(), tuple(colMap(column)))
+        }
+      } catch {
+				case x:RAException => "could not feedback for cell"
+  				
+			}
+      
+     ""
+    }
+    println(s"explainCell Took: ${timeRes._2}")
+    timeRes._1
+  }
+  
+  def getModelsToFeedbackFor(expr: Expression, tuple: Map[String,PrimitiveValue]) : Seq[Model] = {
+    expr match {
+			case v: VGTerm => Seq(v.model)
+			
+			case Conditional(c, t, e) =>
+				(
+					if(Eval.evalBool(c, tuple)){
+						getModelsToFeedbackFor(t, tuple)
+					} else {
+						getModelsToFeedbackFor(e, tuple)
+					}
+				) ++ getModelsToFeedbackFor(c, tuple);
+
+			case Arithmetic(op @ (Arith.And | Arith.Or), a, b) =>
+				(
+					(op, Eval.evalBool(InlineVGTerms.inline(a), tuple)) match {
+						case (Arith.And, true) => getModelsToFeedbackFor(b, tuple)
+						case (Arith.Or, false) => getModelsToFeedbackFor(b, tuple)
+						case _ => Seq()
+					}
+				) ++ getModelsToFeedbackFor(a, tuple)
+
+			case _ => 
+				expr.children.
+					map( getModelsToFeedbackFor(_, tuple) ).flatten
+		}
   }
   
   def registerPythonMimirCallListener(listener : PythonMimirCallInterface) = {

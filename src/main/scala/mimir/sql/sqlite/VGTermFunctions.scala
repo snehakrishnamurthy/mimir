@@ -6,6 +6,8 @@ import com.typesafe.scalalogging.slf4j.LazyLogging
 import mimir.algebra._
 import mimir.ctables._
 import mimir.Database
+import mimir.sql.inlining.InliningFunctions
+
 
 class BestGuessVGTerm(db:Database)
   extends MimirFunction
@@ -16,22 +18,7 @@ class BestGuessVGTerm(db:Database)
     try {
       val modelName = value_text(0).toUpperCase
       val idx = value_int(1)
-
-      val model = db.models.get(modelName)
-
-      val argList =
-        model.argTypes(idx).
-          zipWithIndex.
-          map( arg => value_mimir(arg._2+2, arg._1) )
-      val hintList = 
-        model.hintTypes(idx).
-          zipWithIndex.
-          map( arg => value_mimir(arg._2+argList.length+2, arg._1) )
-
-      val guess = model.bestGuess(idx, argList, hintList)
-
-      logger.trace(s"$modelName;$idx: $argList -> $guess")
-
+      val guess = InliningFunctions.bestGuessVGTerm(db, value_mimir)(modelName, idx)
       return_mimir(guess)
     } catch {
       case e:Throwable => {
