@@ -1,14 +1,15 @@
 package mimir.demo
 
 import java.io._
-import org.specs2.reporter.LineLogger
-import org.specs2.specification.core.{Fragment,Fragments}
 
+import mimir.Mimir.output
+import org.specs2.reporter.LineLogger
+import org.specs2.specification.core.{Fragment, Fragments}
 import mimir.test._
 import mimir.util._
 
 object CureScenario
-  extends SQLTestSpecification("CureScenario",  Map("reset" -> "NO"))
+  extends SQLTestSpecification("CureScenario",  Map("reset" -> "YES"))
 {
 
   val dataFiles = List(
@@ -46,6 +47,21 @@ object CureScenario
           update("CREATE LENS CURE_MV AS SELECT * FROM CURE_TI WITH MISSING_VALUE('IMO_CODE');")
         }
       )
+
+      var table = "CURE_MV"
+      val results = db.query(s"SELECT Vessel,JSON_GROUP_ARRAY(distinct IMO_CODE) FROM $table group by Vessel")
+      output.print(results)
+
+      /*
+      var table = "CURE_MV"
+      println(db.getTableSchema(table))
+      var schema = db.printSchema(table)
+      schema = schema.replace("IMO_CODE,","")
+      schema = "IMO_CODE,"+ schema
+      println(schema)
+      val results = db.query(s"SELECT $schema FROM $table")
+      output.print(results)
+      */
       ok
     }
 

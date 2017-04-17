@@ -254,6 +254,21 @@ case class Database(backend: Backend)
       orElse(backend.getTableSchema(name))
   }
 
+  def printSchema(name: String):String = {
+    var sch:String = ""
+    getTableSchema(name) match {
+      case Some(x) =>
+        x.map((tup)=>{
+          sch += tup._1 + ","
+        })
+      case None =>
+        throw new SQLException("In printSchema schema not found for " + name)
+    }
+    sch = sch.substring(0,sch.size-1)
+    sch
+
+  }
+
   /**
    * Build a Table operator for the table with the provided name.
    */
