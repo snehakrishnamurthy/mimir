@@ -126,7 +126,7 @@ case class Database(backend: Backend)
     val iterator = mode(this, oper)
     try {
       val ret = handler(iterator)
-
+      
       // A bit of a hack, but necessary for safety...
       // The iterator we pass to the handler is only valid within this block.
       // It is incredibly easy to accidentally have the handler return the
