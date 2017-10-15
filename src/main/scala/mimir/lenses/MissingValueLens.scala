@@ -84,8 +84,10 @@ object MissingValueLens {
           }
         }).
         unzip
-
+        println(replacementExprsList)
     val replacementExprs = replacementExprsList.toMap
+    println()
+    println(replacementExprs)
     val projectArgs =
       query.columnNames.
         map( col => replacementExprs.get(col) match {
