@@ -6,7 +6,7 @@ import mimir.algebra._
 import mimir.exec.mode.{WorldBits,TupleBundle}
 
 class SampleResultIterator(
-  val src: ResultIterator, 
+  val src: ResultIterator,
   val tupleSchema: Seq[(String, Type)],
   val nonDet: Set[String],
   val numSamples: Int
@@ -14,10 +14,10 @@ class SampleResultIterator(
   extends ResultIterator
   with LazyLogging
 {
-  val lookup:Seq[Seq[(Int, Double)]] = 
+  val lookup:Seq[Seq[(Int, Double)]] =
     schema.map { case (name, t) =>
       if(nonDet(name)) {
-        (0 until numSamples).map { i => 
+        (0 until numSamples).map { i =>
           src.schema.indexWhere(_._1.equals(s"MIMIR_SAMPLE_${i}_$name"))
         }.map { colIdx => (colIdx, 1.0 / numSamples) }
       } else {
@@ -43,13 +43,13 @@ case class SampleRow(input: Row, source: SampleResultIterator) extends Row
   private def values(v: Int): Seq[(PrimitiveValue, Double)] =
     source.lookup(v).map { case (i, p) => (input(i), p) }
 
-  def tuple: Seq[PrimitiveValue] = 
+  def tuple: Seq[PrimitiveValue] =
     (0 until source.lookup.size).map { i => apply(i) }
 
   /**
    * Return the most common value as the "default"
    */
-  def apply(v: Int): PrimitiveValue = 
+  def apply(v: Int): PrimitiveValue =
     possibilities(v).toSeq.maxBy(_._2)._1
 
   def deterministicCol(v: Int): Boolean = (source.lookup(v).size > 1)

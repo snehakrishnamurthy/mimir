@@ -7,24 +7,24 @@ import mimir.algebra._
 import mimir.util._
 
 /**
- * The ModelManager handles model persistence.  
+ * The ModelManager handles model persistence.
  *
  * The main function of the ModelManager is to provide a persistent
  * (Name -> Model) mapping.  Associations are created through
  * `persist`, removed with `drop`, and accessed with
  * `get`.  The name of the model is given by Model's name field
  *
- * The secondary function is garbage collection.  The manager also 
+ * The secondary function is garbage collection.  The manager also
  * tracks a second set of 'owner' entities.  Owners can be used to
  * cascade deletes on the owner entity to the models, and allows
  * for reference counting with multiple owners.
  *
  * See below in this file for some traits used to decode things.
  */
-class ModelManager(db:Database) 
+class ModelManager(db:Database)
   extends LazyLogging
 {
-  
+
   val decoders = Map[String,((Database, Array[Byte]) => Model)](
     "JAVA"          -> decodeSerializable _
   )
@@ -40,7 +40,7 @@ class ModelManager(db:Database)
     if(db.backend.getTableSchema(modelTable).isEmpty){
       db.backend.update(s"""
         CREATE TABLE $modelTable(
-          name varchar(100), 
+          name varchar(100),
           encoded text,
           decoder varchar(30),
           PRIMARY KEY (name)
@@ -50,7 +50,7 @@ class ModelManager(db:Database)
     if(db.backend.getTableSchema(ownerTable).isEmpty){
       db.backend.update(s"""
         CREATE TABLE $ownerTable(
-          model varchar(100), 
+          model varchar(100),
           owner varchar(100)
         )
       """)
@@ -63,7 +63,6 @@ class ModelManager(db:Database)
   def persist(model:Model): Unit =
   {
     val (serialized,decoder) = model.serialize
-
     db.backend.update(s"""
       INSERT OR REPLACE INTO $modelTable(name, encoded, decoder)
              VALUES (?, ?, ?)
@@ -107,7 +106,7 @@ class ModelManager(db:Database)
   }
 
   /**
-   * Declare (and cache) a new Name -> Model association, and 
+   * Declare (and cache) a new Name -> Model association, and
    * assign the model to an owner entity.
    */
   def persist(model:Model, owner:String): Unit =
@@ -197,9 +196,9 @@ class ModelManager(db:Database)
   {
     prefetchWithRows(
       db.backend.resultRows(s"""
-        SELECT m.decoder, m.encoded 
+        SELECT m.decoder, m.encoded
         FROM $modelTable m, $ownerTable o
-        WHERE m.name = o.name 
+        WHERE m.name = o.name
           AND o.owner = ?
       """, List(
         StringPrimitive(owner)
@@ -211,7 +210,7 @@ class ModelManager(db:Database)
   {
     rows.foreach({
       case List(decoder, encoded) => {
-        val decoderImpl:(Array[Byte] => Model) = 
+        val decoderImpl:(Array[Byte] => Model) =
           decoders.get(decoder.asString) match {
             case None => throw new RAException("Unknown Model Decoder '"+decoder+"'")
             case Some(impl) => impl(db, _)
@@ -221,14 +220,14 @@ class ModelManager(db:Database)
         cache.put(model.name, model)
       }
 
-      case _ => 
+      case _ =>
         throw new SQLException("Error on backend: Expecting only 2 fields in result")
     })
   }
 
   private def garbageCollectIfNeeded(model: String): Unit =
   {
-    val otherOwners = 
+    val otherOwners =
       db.backend.resultRows(s"""
         SELECT * FROM $ownerTable WHERE model = ?
       """, List(
@@ -250,7 +249,7 @@ class ModelManager(db:Database)
 trait NeedsReconnectToDatabase {
   def reconnectToDatabase(db: Database)
 }
-trait NeedsDatabase extends NeedsReconnectToDatabase 
+trait NeedsDatabase extends NeedsReconnectToDatabase
 {
   @transient var db:Database = null
   def reconnectToDatabase(db: Database) = { this.db = db }

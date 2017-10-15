@@ -49,6 +49,7 @@ class LensManager(db: Database) {
     // Create a lens query
     db.views.create(saneName, view)
 
+
     // Persist the associated models
     for(model <- models){
       db.models.persist(model, s"LENS:$saneName")

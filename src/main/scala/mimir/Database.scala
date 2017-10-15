@@ -124,9 +124,10 @@ case class Database(backend: Backend)
   final def query[T, R <:ResultIterator](oper: Operator, mode: CompileMode[R])(handler: R => T): T =
   {
     val iterator = mode(this, oper)
+
     try {
       val ret = handler(iterator)
-      
+
       // A bit of a hack, but necessary for safety...
       // The iterator we pass to the handler is only valid within this block.
       // It is incredibly easy to accidentally have the handler return the
@@ -303,7 +304,6 @@ case class Database(backend: Backend)
         val name = lens.getName()
         val query = sql.convert(lens.getSelectBody())
         val args = lens.getArgs().map(sql.convert(_, x => x)).toList
-
         lenses.create(t, name, query, args)
       }
 

@@ -24,6 +24,7 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
   val useMaterialized: Boolean
   val random = new Random(42)
   val tupleBundle = new TupleBundle( (0 until 10).map { _ => random.nextLong })
+  val longMode = new LongMode( (0 until 10).map { _ => random.nextLong })
   val sampler     = new SampleRows( (0 until 10).map { _ => random.nextLong })
 
 
@@ -123,9 +124,9 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
        //}
       if(db.views.get(testTable).isEmpty){
         if(db.tableExists(testTable)){
-          println("here!!")
           update(s"DROP TABLE $testTable")
         }
+
         println(s"""
           CREATE LENS ${testTable}
             AS SELECT * FROM ${baseTable}
@@ -138,7 +139,6 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
             WITH MISSING_VALUE(${nullables.map {"'"+_+"'"}.mkString(", ")})
           """);
         }
-        println(timeForQuery)
         println(s"Create Time:${timeForQuery._2} seconds <- RepairKeyLens:${testTable}")
       }
       db.tableExists(testTable) must beTrue
@@ -254,8 +254,15 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
             println(s"SAMPLE QUERY $idx:\n$queryString")
             val ((rows, backendTime), totalTime) = time {
                var x = 0
-               val backendTime = db.query(queryString) { results =>
-                 time { results.foreach { row => (x = x + 1) } }
+               val backendTime = db.query(queryString,tupleBundle) {
+                  results =>
+                 time { results.foreach {
+                   row => (x = x + 1)
+                    //for(i<- 0 until 2){
+                      println(results.values)
+                    //}
+                  }
+                 }
                }
                (x, backendTime._2)
             }

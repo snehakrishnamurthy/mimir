@@ -19,7 +19,7 @@ import mimir.models._
 import mimir.exec.uncertainty._
 
 object ImputeTiming
-  extends VLDB2017TimingTest("VL", Map("reset" -> "NO", "inline" -> "YES"))//, "initial_db" -> "test/tpch-impute-1g.db"))
+  extends VLDB2017TimingTest("tpch10_nontpch", Map("reset" -> "NO", "inline" -> "YES"))//, "initial_db" -> "test/tpch-impute-1g.db"))
   with BeforeAll
 {
 
@@ -46,11 +46,11 @@ object ImputeTiming
 
   val relevantTables = Seq(
   //  ("CUSTOMER", Seq("NATIONKEY")),
-    ("LINEITEM", Seq("linestatus"))
+    ("LINEITEM", Seq("shipdate"))
   //  ("PARTSUPP", Seq("PARTKEY", "SUPPKEY")),
   //  ("NATION", Seq("REGIONKEY")),
   //  ("SUPPLIER", Seq("NATIONKEY")),
-  //  ("ORDERS", Seq("CUSTKEY"))
+  //  ("ORDERS", Seq("orderdate"))
   )
 
   val relevantIndexes = Seq(
@@ -72,7 +72,7 @@ object ImputeTiming
     ("LINEITEM", Seq(
     //  Seq("ORDERKEY", "LINENUMBER"),
       //Seq("PARTKEY"),
-      Seq("linestatus")
+      Seq("shipdate")
     ))
   //  ("ORDERS", Seq(
     //  Seq("ORDERKEY"),
@@ -90,39 +90,9 @@ object ImputeTiming
             //
             s"""
               -- TPC-H Query 1
-              SELECT shipdate
-              FROM lineitem_run_$i;
-            """
-            // ,
-            // s"""
-            //   -- TPC-H Query 3
-            //   SELECT o.orderkey,
-            //          o.orderdate,
-            //          o.shippriority,
-            //          SUM(extendedprice * (1 - discount)) AS query3
-            //   FROM   customer_run_$i c, orders_run_$i o, lineitem_run_$i l
-            //   WHERE  c.mktsegment = 'BUILDING'
-            //     AND  o.custkey = c.custkey
-            //     AND  l.orderkey = o.orderkey
-            //     AND  o.orderdate < DATE('1995-03-15')
-            //     AND  l.shipdate > DATE('1995-03-15')
-            //   GROUP BY o.orderkey, o.orderdate, o.shippriority;
-            // """
-            // ,
-            // s"""
-            //   -- TPC-H Query 5 - NoAgg
-            //   SELECT n.name, l.extendedprice * (1 - l.discount) AS revenue
-            //    FROM   region r, nation_run_$i n, supplier_run_$i s, customer_run_$i c, orders_run_$i o, lineitem_run_$i l
-            //   WHERE  r.name = 'ASIA'
-            //     AND  n.regionkey = r.regionkey
-            //     AND  c.custkey = o.custkey
-            //     AND  o.orderdate >= DATE('1994-01-01')
-            //     AND  o.orderdate <  DATE('1995-01-01')
-            //     AND  l.orderkey = o.orderkey
-            //     AND  l.suppkey = s.suppkey
-            //     AND  c.nationkey = s.nationkey
-            //     AND  s.nationkey = n.nationkey
-            // """
+              SELECT shipdate from  lineitem_run_$i;
+           """
+
             // ,
             // s"""
             //   -- TPC-H Query 5
@@ -202,13 +172,6 @@ object ImputeTiming
           Fragments.foreach(TPCHQueries.zipWithIndex)
           {
            case (a,b) => {
-             val stream = new ByteArrayInputStream(a.getBytes)
-             var parser = new MimirJSqlParser(stream);
-             val stmt:
-               Statement = parser.Statement();
-             val ps = stmt.asInstanceOf[Select];
-             println(tupleBundle.rewrite(db,db.sql.convert(ps))._2);
-             db.query(ps, tupleBundle)(_.foreach(println))
              sampleFromLens((a,b))
            }
            }

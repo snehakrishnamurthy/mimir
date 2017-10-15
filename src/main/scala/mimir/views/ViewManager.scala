@@ -43,6 +43,7 @@ class ViewManager(db:Database) extends LazyLogging {
   def create(name: String, query: Operator): Unit =
   {
     logger.debug(s"CREATE VIEW $name AS $query")
+
     if(db.tableExists(name)){
       throw new SQLException(s"View '$name' already exists")
     }
@@ -101,7 +102,7 @@ class ViewManager(db:Database) extends LazyLogging {
       db.backend.resultRows(s"SELECT QUERY, METADATA FROM $viewTable WHERE name = ?",
         Seq(StringPrimitive(name))
       )
-    
+
     results.take(1).headOption.map(_.toSeq).map(
       {
         case Seq(StringPrimitive(s), IntPrimitive(meta)) => {

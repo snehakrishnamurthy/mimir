@@ -12,7 +12,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import com.typesafe.scalalogging.slf4j.LazyLogging
 
-class JDBCBackend(val backend: String, val filename: String) 
+class JDBCBackend(val backend: String, val filename: String)
   extends Backend
   with LazyLogging
   with InlinableBackend
@@ -25,7 +25,7 @@ class JDBCBackend(val backend: String, val filename: String)
 
   val tableSchemas: scala.collection.mutable.Map[String, Seq[(String, Type)]] = mutable.Map()
 
-  def open() = 
+  def open() =
   {
     this.synchronized({
       assert(openConnections >= 0)
@@ -52,13 +52,13 @@ class JDBCBackend(val backend: String, val filename: String)
     })
   }
 
-  def invalidateCache() = 
+  def invalidateCache() =
     tableSchemas.clear()
 
   def enableInlining(db: Database): Unit =
   {
     backend match {
-      case "sqlite" => 
+      case "sqlite" =>
         sqlite.VGTermFunctions.register(db, conn)
         inliningAvailable = true
     }
@@ -79,7 +79,7 @@ class JDBCBackend(val backend: String, val filename: String)
     })
   }
 
-  def execute(sel: String): ResultSet = 
+  def execute(sel: String): ResultSet =
   {
     this.synchronized({
       try {
@@ -90,13 +90,13 @@ class JDBCBackend(val backend: String, val filename: String)
         val ret = stmt.executeQuery(sel)
         stmt.closeOnCompletion()
         ret
-      } catch { 
+      } catch {
         case e: SQLException => println(e.toString+"during\n"+sel)
           throw new SQLException("Error in "+sel, e)
       }
     })
   }
-  def execute(sel: String, args: Seq[PrimitiveValue]): ResultSet = 
+  def execute(sel: String, args: Seq[PrimitiveValue]): ResultSet =
   {
     this.synchronized({
       try {
@@ -106,13 +106,13 @@ class JDBCBackend(val backend: String, val filename: String)
         val stmt = conn.prepareStatement(sel)
         setArgs(stmt, args)
         stmt.executeQuery()
-      } catch { 
+      } catch {
         case e: SQLException => println(e.toString+"during\n"+sel+" <- "+args)
           throw new SQLException("Error", e)
       }
     })
   }
-  
+
   def update(upd: String): Unit =
   {
     this.synchronized({
@@ -189,11 +189,11 @@ class JDBCBackend(val backend: String, val filename: String)
   def selectInto(table: String, query: String): Unit =
   {
     backend match {
-      case "sqlite" => 
+      case "sqlite" =>
         update(s"CREATE TABLE $table AS $query")
     }
   }
-  
+
   def getTableSchema(table: String): Option[Seq[(String, Type)]] =
   {
     this.synchronized({
@@ -210,12 +210,12 @@ class JDBCBackend(val backend: String, val filename: String)
           val cols: Option[Seq[(String, Type)]] = backend match {
             case "sqlite" => {
               // SQLite doesn't recognize anything more than the simplest possible types.
-              // Type information is persisted but not interpreted, so conn.getMetaData() 
+              // Type information is persisted but not interpreted, so conn.getMetaData()
               // is useless for getting schema information.  Instead, we need to use a
               // SQLite-specific PRAGMA operation.
               SQLiteCompat.getTableSchema(conn, table)
             }
-            case "oracle" => 
+            case "oracle" =>
               val columnRet = conn.getMetaData().getColumns(null, "ARINDAMN", table, "%")  // TODO Generalize
               var ret = List[(String, Type)]()
               while(columnRet.isBeforeFirst()){ columnRet.next(); }
@@ -229,7 +229,7 @@ class JDBCBackend(val backend: String, val filename: String)
               columnRet.close()
               Some(ret)
           }
-          
+
           cols match { case None => (); case Some(s) => tableSchemas += table -> s }
           cols
       }
@@ -265,7 +265,7 @@ class JDBCBackend(val backend: String, val filename: String)
   }
 
   def canHandleVGTerms: Boolean = inliningAvailable
-  def rowIdType: Type = 
+  def rowIdType: Type =
     backend match {
       case "sqlite" => TInt()
       case _ => TString()
@@ -278,7 +278,7 @@ class JDBCBackend(val backend: String, val filename: String)
 
   def specializeQuery(q: Operator, db: Database): Operator = {
     backend match {
-      case "sqlite" if inliningAvailable => 
+      case "sqlite" if inliningAvailable =>
         VGTermFunctions.specialize(SpecializeForSQLite(q, db))
       case "sqlite" => SpecializeForSQLite(q, db)
       case "oracle" => q
@@ -294,32 +294,32 @@ class JDBCBackend(val backend: String, val filename: String)
         case p:IntPrimitive       => stmt.setLong(i, p.v)
         case p:FloatPrimitive     => stmt.setDouble(i, p.v)
         case _:NullPrimitive      => stmt.setNull(i, Types.VARCHAR)
-        case d:DatePrimitive      => 
+        case d:DatePrimitive      =>
           backend match {
-            case "sqlite" => 
+            case "sqlite" =>
               stmt.setString(i, d.asString )
             case _ =>
               stmt.setDate(i, JDBCUtils.convertDate(d))
           }
-        case t:TimestampPrimitive      => 
+        case t:TimestampPrimitive      =>
           backend match {
-            case "sqlite" => 
+            case "sqlite" =>
               stmt.setString(i, t.asString )
             case _ =>
               stmt.setTimestamp(i, JDBCUtils.convertTimestamp(t))
           }
         case r:RowIdPrimitive     => stmt.setString(i,r.v)
-        case t:TypePrimitive      => stmt.setString(i, t.t.toString) 
+        case t:TypePrimitive      => stmt.setString(i, t.t.toString)
         case BoolPrimitive(true)  => stmt.setInt(i, 1)
         case BoolPrimitive(false) => stmt.setInt(i, 0)
       }
     })
   }
 
-  def listTablesQuery: Operator = 
+  def listTablesQuery: Operator =
   {
     backend match {
-      case "sqlite" => 
+      case "sqlite" =>
         Project(
           Seq(
             ProjectArg("TABLE_NAME", Var("NAME"))
@@ -333,13 +333,13 @@ class JDBCBackend(val backend: String, val filename: String)
       case "oracle" => ???
     }
   }
-  def listAttrsQuery: Operator = 
+  def listAttrsQuery: Operator =
   {
     backend match {
       case "sqlite" => {
         logger.warn("SQLITE has no programatic way to access attributes in SQL")
         EmptyTable(Seq(
-          ("TABLE_NAME", TString()), 
+          ("TABLE_NAME", TString()),
           ("ATTR_NAME", TString()),
           ("ATTR_TYPE", TString()),
           ("IS_KEY", TBool())
@@ -349,5 +349,5 @@ class JDBCBackend(val backend: String, val filename: String)
       case "oracle" => ???
     }
   }
-  
+
 }
