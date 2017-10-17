@@ -89,7 +89,7 @@ object ImputeTiming
           Seq(
             //
             s"""
-            SELECT count(*) from  lineitem_run_$i group by returnflag;
+            SELECT avg(orderkey) from  lineitem_run_$i group by discount;
             """"
 
             // ,

@@ -27,7 +27,7 @@ class NaiveMode (seeds: Seq[Long] = (0l until 10l).toSeq)
           ReplaceMissingLensToSampler(query,db.models.get(_),i)_1
 
       }
-    println(sampleShards)
+
     OperatorUtils.makeUnion(sampleShards)
     var nonDeterministic:Set[String] = Set()
     (OperatorUtils.makeUnion(sampleShards), nonDeterministic)
@@ -42,7 +42,7 @@ class NaiveMode (seeds: Seq[Long] = (0l until 10l).toSeq)
     val (compiled, nonDeterministicColumns) = compileNaive(query,db)
     query = compiled
     query = db.views.resolve(query)
-
+    println(query)
     (
       query,
       query.columnNames,
@@ -148,7 +148,7 @@ class NaiveMode (seeds: Seq[Long] = (0l until 10l).toSeq)
         val (newChild, nonDeterministicInput) = ReplaceMissingLensToSampler(oldChild, models,shift)
 
           (
-            Aggregate(gbColumns, aggColumns,
+            Aggregate(gbColumns++Seq(Var(WorldBits.columnName)), aggColumns,
               newChild),nonDeterministicInput
           )
 
