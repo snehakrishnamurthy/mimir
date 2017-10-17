@@ -31,7 +31,6 @@ class LongMode (seeds: Seq[Long] = (0l until 10l).toSeq)
     query = compiled
     var longQuery = convertFlatToLong(compiled,queryRaw.columnNames,nonDeterministicColumns)
       query = db.views.resolve(longQuery)
-      println(query)
     (
       query,
       queryRaw.columnNames,

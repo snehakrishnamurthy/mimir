@@ -53,7 +53,7 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
     //println(query)
 
     query = db.views.resolve(query)
-
+    println(query)
     (
       query,
       TupleBundle.splitColumnNames(queryRaw.columnNames, nonDeterministicColumns, seeds.length),

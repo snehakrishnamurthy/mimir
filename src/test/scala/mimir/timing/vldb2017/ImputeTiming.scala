@@ -19,7 +19,7 @@ import mimir.models._
 import mimir.exec.uncertainty._
 
 object ImputeTiming
-  extends VLDB2017TimingTest("tpch10_nontpch", Map("reset" -> "NO", "inline" -> "YES"))//, "initial_db" -> "test/tpch-impute-1g.db"))
+  extends VLDB2017TimingTest("tpch10_tpch_UC1", Map("reset" -> "NO", "inline" -> "YES"))//, "initial_db" -> "test/tpch-impute-1g.db"))
   with BeforeAll
 {
 
@@ -46,11 +46,11 @@ object ImputeTiming
 
   val relevantTables = Seq(
   //  ("CUSTOMER", Seq("NATIONKEY")),
-    ("LINEITEM", Seq("shipdate"))
+    ("LINEITEM", Seq("linestatus","orderkey","discount")),
   //  ("PARTSUPP", Seq("PARTKEY", "SUPPKEY")),
   //  ("NATION", Seq("REGIONKEY")),
   //  ("SUPPLIER", Seq("NATIONKEY")),
-  //  ("ORDERS", Seq("orderdate"))
+    ("ORDERS", Seq("custkey"))
   )
 
   val relevantIndexes = Seq(
@@ -89,9 +89,8 @@ object ImputeTiming
           Seq(
             //
             s"""
-              -- TPC-H Query 1
-              SELECT shipdate from  lineitem_run_$i;
-           """
+            SELECT count(*) from  lineitem_run_$i group by returnflag;
+            """"
 
             // ,
             // s"""
