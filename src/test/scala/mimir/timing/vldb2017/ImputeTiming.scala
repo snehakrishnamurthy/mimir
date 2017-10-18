@@ -89,7 +89,7 @@ object ImputeTiming
           Seq(
             //
             s"""
-            select discount from lineitem_run_$i where discount>0.05 limit 3,1;
+select discount from lineitem_run_$i  where quantity > 49 and returnflag = 'R'  and shipmode = 'FOB' and extendedprice>84000 order by discount;
             """"
 
             // ,

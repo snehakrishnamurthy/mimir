@@ -255,11 +255,11 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
             println(s"SAMPLE QUERY $idx:\n$queryString")
             val ((rows, backendTime), totalTime) = time {
                var x = 0
-               val backendTime = db.query(queryString,naiveMode) {
+               val backendTime = db.query(queryString,tupleBundle) {
                   results =>
                  time { results.foreach {
                    row => (x = x + 1)
-                    println(row(0))
+                  println(row(0))
                   }
                  }
                }

@@ -401,7 +401,6 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
       }
       case Limit(offset,count,oldChild) =>{
         val (newChild, nonDeterministicInput) = compileFlat(oldChild, models)
-        println(newChild)
         val completedLimit =
           Select(
             Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
@@ -409,6 +408,7 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
           )
         (Limit(offset,count,completedLimit),nonDeterministicInput)
       }
+
 
       // We don't handle materialized tuple bundles (at the moment)
       // so give up and drop the view.
