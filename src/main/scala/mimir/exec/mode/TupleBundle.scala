@@ -49,8 +49,6 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
 
     val (compiled, nonDeterministicColumns) = compileFlat(query, db.models.get(_))
     query = compiled
-    //println(query)
-    //println(query)
 
     query = db.views.resolve(query)
     println(query)
@@ -149,7 +147,6 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
 
   def compileFlat(query: Operator, models: (String => Model)): (Operator, Set[String]) =
   {
-    //println(CTables.isDeterministic(query));
     // Check for a shortcut opportunity... if the expression is deterministic, we're done!
     if(CTables.isDeterministic(query)){
       return (
@@ -197,8 +194,6 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
       }
 
       case Select(condition, oldChild) => {
-        //println(oldChild)
-        //println(models)
         val (newChild, nonDeterministicInput) = compileFlat(oldChild, models)
 
         if(doesExpressionNeedSplit(condition, nonDeterministicInput)){
@@ -404,12 +399,22 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
 
 
       }
+      case Limit(offset,count,oldChild) =>{
+        val (newChild, nonDeterministicInput) = compileFlat(oldChild, models)
+        println(newChild)
+        val completedLimit =
+          Select(
+            Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
+            newChild
+          )
+        (Limit(offset,count,completedLimit),nonDeterministicInput)
+      }
 
       // We don't handle materialized tuple bundles (at the moment)
       // so give up and drop the view.
       case View(_, query, _) =>  compileFlat(query, models)
 
-      case ( Sort(_,_) | Limit(_,_,_) | LeftOuterJoin(_,_,_) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _) ) =>
+      case ( Sort(_,_) | LeftOuterJoin(_,_,_) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _) ) =>
         throw new RAException("Tuple-Bundler presently doesn't support LeftOuterJoin, Sort, or Limit (probably need to resort to 'Long' evaluation)")
     }
   }

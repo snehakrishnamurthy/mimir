@@ -89,7 +89,7 @@ object ImputeTiming
           Seq(
             //
             s"""
-            SELECT avg(orderkey) from  lineitem_run_$i group by discount;
+            select discount from lineitem_run_$i where discount>0.05 limit 3,1;
             """"
 
             // ,

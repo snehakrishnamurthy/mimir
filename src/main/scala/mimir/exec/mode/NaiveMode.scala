@@ -88,16 +88,19 @@ class NaiveMode (seeds: Seq[Long] = (0l until 10l).toSeq)
         val (
           newColumns,
           nonDeterministicOutputs
-          ):(Seq[ProjectArg], Seq[Set[String]]) = columns.map { col =>
+        ):(Seq[ProjectArg], Seq[Set[String]]) = columns.map { col =>
           if(!CTables.isDeterministic(col.expression)){
 
             var nullMap:Map[String,Expression] = Map()
             (ProjectArg(col.name,
-            CTAnalyzer.compileSample(
-              Eval.inline(col.expression, nullMap),
-              IntPrimitive(0),
-              models
-            )) ,
+
+                CTAnalyzer.compileSample(
+                Eval.inline(col.expression, nullMap),
+                IntPrimitive(seeds(shift)),
+                models
+                )
+
+            ),
               Set(col.name)
             )
           } else {
@@ -152,7 +155,14 @@ class NaiveMode (seeds: Seq[Long] = (0l until 10l).toSeq)
               newChild),nonDeterministicInput
           )
 
-        }
+      }
+      case Limit(offset,count,oldChild) =>{
+        val (newChild, nonDeterministicInput) = ReplaceMissingLensToSampler(oldChild, models,shift)
+        (
+          Limit(offset,count,newChild),nonDeterministicInput
+        )
+
+      }
 
 
 
@@ -161,7 +171,7 @@ class NaiveMode (seeds: Seq[Long] = (0l until 10l).toSeq)
       // so give up and drop the view.
       case View(_, query, _) =>  ReplaceMissingLensToSampler(query, models,shift)
 
-      case ( Sort(_,_) | Limit(_,_,_) | LeftOuterJoin(_,_,_) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _) ) =>
+      case ( Sort(_,_) | LeftOuterJoin(_,_,_) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _) ) =>
         throw new RAException("Tuple-Bundler presently doesn't support LeftOuterJoin, Sort, or Limit (probably need to resort to 'Long' evaluation)")
     }
   }
