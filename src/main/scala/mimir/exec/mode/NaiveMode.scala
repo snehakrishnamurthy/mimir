@@ -16,8 +16,8 @@ class NaiveMode (seeds: Seq[Long] = (0l until 10l).toSeq)
   type MetadataT =
     (
       Set[String],   // Nondeterministic column set
-        Seq[String]    // Provenance columns
-      )
+      Seq[String]    // Provenance columns
+    )
 
 
   def compileNaive(query: Operator, db: Database):(Operator, Set[String]) =

@@ -25,7 +25,7 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
   val random = new Random(42)
   val tupleBundle = new TupleBundle( (0 until 10).map { _ => random.nextLong })
   val naiveMode = new NaiveMode( (0 until 10).map { _ => random.nextLong })
-  val longMode = new LongMode( (0 until 10).map { _ => random.nextLong })
+  val interleave = new InterleaveMode( (0 until 10).map { _ => random.nextLong })
   val sampler     = new SampleRows( (0 until 10).map { _ => random.nextLong })
 
 
@@ -255,7 +255,7 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
             println(s"SAMPLE QUERY $idx:\n$queryString")
             val ((rows, backendTime), totalTime) = time {
                var x = 0
-               val backendTime = db.query(queryString,tupleBundle) {
+               val backendTime = db.query(queryString,interleave) {
                   results =>
                  time { results.foreach {
                    row => (x = x + 1)
