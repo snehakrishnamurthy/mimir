@@ -259,7 +259,7 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
                   results =>
                  time { results.foreach {
                    row => (x = x + 1)
-                  println(row(0))
+                   println(row)
                   }
                  }
                }
