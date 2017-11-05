@@ -120,11 +120,11 @@ libraryDependencies ++= Seq(
   ///////////////////  GProM/Native Integration //////////////
   "net.java.dev.jna"              %    "jna"                     % "4.2.2",
   "net.java.dev.jna"              %    "jna-platform"            % "4.2.2",
-  "log4j"                         %    "log4j"                   % "1.2.17"
+  "log4j"                         %    "log4j"                   % "1.2.17",
   
   ///////////////////// Viztrails Integration ///////////////////
   
-  "net.sf.py4j" 				  %	   "py4j" 				  % "0.10.4",
+  "net.sf.py4j" 				  %	   "py4j" 				  % "0.10.4"
   
   //////////////////////// Visualization //////////////////////
   // For now, all of this happens in python with matplotlib
