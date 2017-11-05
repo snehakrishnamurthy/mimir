@@ -1,19 +1,22 @@
 package mimir.timing.vldb2017
 
 import java.io._
+
 import org.specs2.specification._
 import org.specs2.specification.core.Fragments
 import org.specs2.concurrent._
+
 import scala.concurrent.duration._
-
-
 import mimir.algebra._
 import mimir.util._
 import mimir.ctables.InlineVGTerms
 import mimir.optimizer.operator.InlineProjections
-import mimir.test.{SQLTestSpecification, PDBench, TestTimer}
+import mimir.test.{PDBench, SQLTestSpecification, TestTimer}
 import mimir.models._
 import mimir.exec.uncertainty._
+import mimir.parser.MimirJSqlParser
+import net.sf.jsqlparser.statement.Statement
+import net.sf.jsqlparser.statement.select.{FromItem, PlainSelect, Select, SelectBody}
 
 object ImputeTiming
   extends VLDB2017TimingTest("tpch10_tpch_UC1", Map("reset" -> "NO", "inline" -> "YES"))//, "initial_db" -> "test/tpch-impute-1g.db"))
@@ -42,39 +45,20 @@ object ImputeTiming
   }
 
   val relevantTables = Seq(
-  //  ("CUSTOMER", Seq("NATIONKEY")),
-    ("LINEITEM", Seq("ORDERKEY", "linestatus", "discount")),
-  //  ("PARTSUPP", Seq("PARTKEY", "SUPPKEY")),
-    //("NATION", Seq("REGIONKEY")),
-    //("SUPPLIER", Seq("NATIONKEY")),
-    ("ORDERS", Seq("CUSTKEY"))
+    ("LINEITEM", Seq("linestatus","discount","orderkey")),
+    ("ORDERS", Seq("custkey"))
+//    ("LINEITEM", Seq("shipdate")),
+//    ("ORDERS", Seq("orderdate"))
   )
 
   val relevantIndexes = Seq(
-    //("SUPPLIER", Seq(
-      //Seq("SUPPKEY"),
-      //Seq("NATIONKEY")
-    //)),
-    //("PARTSUPP", Seq(
-      //Seq("PARTKEY", "SUPPKEY"),
-      //Seq("SUPPKEY")
-    //)),
-    //("CUSTOMER", Seq(
-      //Seq("CUSTKEY"),
-      //Seq("NATIONKEY")
-    //)),
-    //("NATION", Seq(
-      //Seq("NATIONKEY")
-    //)),
+
     ("LINEITEM", Seq(
-      Seq("ORDERKEY", "LINESTATUS","DISCOUNT")
-    //  Seq("PARTKEY"),
-    //  Seq("SUPPKEY")
+      Seq("linestatus","discount","orderkey")
     )),
-    ("ORDERS", Seq(
-      //Seq("ORDERKEY"),
-      Seq("CUSTKEY")
-    ))
+      ("orders", Seq(
+        Seq("custkey")
+      ))
   )
   if(false){ "Skipping TPCH Inpute Test" >> ok } else {
     "TPCH Impute" should {
@@ -86,10 +70,9 @@ object ImputeTiming
           Seq(
             //
             s"""
-              SELECT orderkey,discount from  lineitem_run_$i where  linestatus = 'F' and discount > 0.07 and tax = 0.03 and extendedprice > 84000 and quantity > 49 and returnflag = 'R' ;
-            """
-            // ,
-            // s"""
+               SELECT orderkey,discount from  lineitem_run_$i where  linestatus = 'F' and discount > 0.07 and
+               tax = 0.03 and extendedprice > 84000 and quantity > 49 and returnflag = 'R' ;
+               """
             //   -- TPC-H Query 3
             //   SELECT o.orderkey,
             //          o.orderdate,
@@ -102,7 +85,7 @@ object ImputeTiming
             //     AND  o.orderdate < DATE('1995-03-15')
             //     AND  l.shipdate > DATE('1995-03-15')
             //   GROUP BY o.orderkey, o.orderdate, o.shippriority;
-            // """
+            //
             // ,
             // s"""
             //   -- TPC-H Query 5 - NoAgg
@@ -198,7 +181,7 @@ object ImputeTiming
           {
             sampleFromLens(_)
           }
-        } else { "Skipping Tuple Bundle Tests" >> ok }
+        }else { "Skipping Tuple Bundle Tests" >> ok }
 
         if(runSamplerQueries){
           Fragments.foreach(TPCHQueries.zipWithIndex)

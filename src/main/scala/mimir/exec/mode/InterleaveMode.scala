@@ -247,12 +247,12 @@ class InterleaveMode(seeds: Seq[Long] = (0l until 10l).toSeq)
       case Select(condition, oldChild) => {
 
         val (newChild, nonDeterministicInput) = compileInterleaved(oldChild, db)
-//          ( Select(ExpressionUtils.makeAnd(condition,ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(Var(WorldBits.columnName).eq(IntPrimitive(1)),
-//            Var(WorldBits.columnName).eq(IntPrimitive(2))),Var(WorldBits.columnName).eq(IntPrimitive(2)))
-//            ,Var(WorldBits.columnName).eq(IntPrimitive(4))),Var(WorldBits.columnName).eq(IntPrimitive(8)))
-//            ,Var(WorldBits.columnName).eq(IntPrimitive(16))),Var(WorldBits.columnName).eq(IntPrimitive(32)))
-//            ,Var(WorldBits.columnName).eq(IntPrimitive(64))),Var(WorldBits.columnName).eq(IntPrimitive(128)))
-//            ,Var(WorldBits.columnName).eq(IntPrimitive(256))),Var(WorldBits.columnName).eq(IntPrimitive(512)))), newChild), nonDeterministicInput )
+        //  ( Select(ExpressionUtils.makeAnd(condition,ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(ExpressionUtils.makeOr(Var(WorldBits.columnName).eq(IntPrimitive(1)),
+        //    Var(WorldBits.columnName).eq(IntPrimitive(2))),Var(WorldBits.columnName).eq(IntPrimitive(2)))
+        //    ,Var(WorldBits.columnName).eq(IntPrimitive(4))),Var(WorldBits.columnName).eq(IntPrimitive(8)))
+        //    ,Var(WorldBits.columnName).eq(IntPrimitive(16))),Var(WorldBits.columnName).eq(IntPrimitive(32)))
+        //    ,Var(WorldBits.columnName).eq(IntPrimitive(64))),Var(WorldBits.columnName).eq(IntPrimitive(128)))
+        //    ,Var(WorldBits.columnName).eq(IntPrimitive(256))),Var(WorldBits.columnName).eq(IntPrimitive(512)))), newChild), nonDeterministicInput )
 
         (Select(condition,newChild),nonDeterministicInput)
       }
