@@ -119,7 +119,7 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
     val (baseTable, nullables) = tableFields
     val testTable = (baseTable+tableSuffix).toUpperCase
     //gives exception why?
-    //s"Create Missing Value Imputation Lens for table: $baseTable" >> {
+    s"Create Missing Value Imputation Lens for table: $testTable" >> {
       //if(db.tableExists(testTable)){
         // update(s"DROP LENS $testTable")
        //}
@@ -143,7 +143,7 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
         println(s"Create Time:${timeForQuery._2} seconds <- RepairKeyLens:${testTable}")
       }
       db.tableExists(testTable) must beTrue
-  //  }
+   }
     s"Materialize Lens: $testTable" >> {
       if(useMaterialized){
         if(!db.views(testTable).isMaterialized){

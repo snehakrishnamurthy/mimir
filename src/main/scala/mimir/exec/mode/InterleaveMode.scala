@@ -363,8 +363,8 @@ class InterleaveMode(seeds: Seq[Long] = (0l until 10l).toSeq)
 
 
 
-      case ( Limit(_,_,_) | LeftOuterJoin(_,_,_) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _) ) =>
-        throw new RAException("Tuple-Bundler presently doesn't support LeftOuterJoin, Sort, or Limit (probably need to resort to 'Long' evaluation)")
+      case ( LeftOuterJoin(_,_,_) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _) ) =>
+        throw new RAException("Interleave mode presently doesn't support LeftOuterJoin")
     }
   }
 

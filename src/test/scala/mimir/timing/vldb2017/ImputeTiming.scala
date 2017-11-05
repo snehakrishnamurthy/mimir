@@ -72,12 +72,12 @@ object ImputeTiming
     ("LINEITEM", Seq(
     //  Seq("ORDERKEY", "LINENUMBER"),
       //Seq("PARTKEY"),
-      Seq("shipdate")
-    ))
-  //  ("ORDERS", Seq(
+      Seq("orderkey","linestatus","discount")
+    )),
+    ("ORDERS", Seq(
     //  Seq("ORDERKEY"),
-      //Seq("CUSTKEY")
-    //))
+      Seq("CUSTKEY")
+    ))
   )
   if(false){ "Skipping TPCH Inpute Test" >> ok } else {
     "TPCH Impute" should {
@@ -89,7 +89,7 @@ object ImputeTiming
           Seq(
             //
             s"""
-              select discount from lineitem_run_$i limit 2 union select discount from lineitem_run_$i limit 5;
+SELECT orderkey,discount from  lineitem_run_$i where  linestatus = 'F' and discount > 0.07 and tax = 0.03 and extendedprice > 84000 and quantity > 49 and returnflag = 'R' ;
             """"
 
             // ,
