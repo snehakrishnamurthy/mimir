@@ -23,10 +23,11 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
   val timeout: Duration
   val useMaterialized: Boolean
   val random = new Random(42)
+  val sampler     = new SampleRows( (0 until 10).map { _ => random.nextLong })
   val tupleBundle = new TupleBundle( (0 until 10).map { _ => random.nextLong })
   val naiveMode = new NaiveMode( (0 until 10).map { _ => random.nextLong })
   val interleave = new InterleaveMode( (0 until 10).map { _ => random.nextLong })
-  val sampler     = new SampleRows( (0 until 10).map { _ => random.nextLong })
+
 
 
   def loadTable(tableFields:(String, String, Type, Double)) =
