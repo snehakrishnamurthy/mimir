@@ -49,14 +49,14 @@ class Compiler(db: Database) extends LazyLogging {
   val rnd = new Random
 
   /**
-   * Perform a full end-end compilation pass producing best guess results.  
-   * Return an iterator over the result set.  
+   * Perform a full end-end compilation pass producing best guess results.
+   * Return an iterator over the result set.
    */
   def compile[R <:ResultIterator](query: Operator, mode: CompileMode[R]): R =
     mode(db, query)
 
   def deploy(
-    compiledOper: Operator, 
+    compiledOper: Operator,
     outputCols: Seq[String]
   ): ResultIterator =
   {
@@ -64,7 +64,7 @@ class Compiler(db: Database) extends LazyLogging {
     val isAnOutputCol = outputCols.toSet
 
     // Optimize
-    oper = optimize(oper)
+    //oper = optimize(oper)
 
     // Run a final typecheck to check the sanitity of the rewrite rules
     val schema = db.typechecker.schemaOf(oper)
@@ -78,28 +78,28 @@ class Compiler(db: Database) extends LazyLogging {
     val annotationCols =
       projections.keys.filter( !isAnOutputCol(_) )
 
-    val requiredColumns = 
+    val requiredColumns =
       projections.values
         .map(_.expression)
         .flatMap { ExpressionUtils.getColumns(_) }
         .toSet
 
-    val (agg: Option[(Seq[Var], Seq[AggFunction])], unionClauses: Seq[Operator]) = 
+    val (agg: Option[(Seq[Var], Seq[AggFunction])], unionClauses: Seq[Operator]) =
       DecomposeAggregates(oper, db.typechecker) match {
-        case Aggregate(gbCols, aggCols, src) => 
+        case Aggregate(gbCols, aggCols, src) =>
           (Some((gbCols, aggCols)), OperatorUtils.extractUnionClauses(src))
-        case _ => 
+        case _ =>
           (None, OperatorUtils.extractUnionClauses(oper))
       }
-      
+
     if(unionClauses.size > 1 && ExperimentalOptions.isEnabled("AVOID-IN-SITU-UNIONS")){
 
-      val requiredColumnsInOrder = 
+      val requiredColumnsInOrder =
         agg match {
-          case None => 
+          case None =>
             requiredColumns.toSeq
-          case Some((gbCols, aggFunctions)) => 
-            gbCols.map { _.name } ++ 
+          case Some((gbCols, aggFunctions)) =>
+            gbCols.map { _.name } ++
             aggFunctions
               .flatMap { _.args }
               .flatMap { ExpressionUtils.getColumns(_) }
@@ -113,11 +113,11 @@ class Compiler(db: Database) extends LazyLogging {
 
       val aggregateIterator =
         agg match {
-          case None => 
+          case None =>
             jointIterator
-          case Some((gbCols, aggFunctions)) => 
+          case Some((gbCols, aggFunctions)) =>
             new AggregateResultIterator(
-              gbCols, 
+              gbCols,
               aggFunctions,
               requiredColumnsInOrder.map { col => (col, sourceColumnTypes(col)) },
               jointIterator,
@@ -128,7 +128,7 @@ class Compiler(db: Database) extends LazyLogging {
         outputCols.map( projections(_) ),
         annotationCols.map( projections(_) ).toSeq,
         db.typechecker.schemaOf(oper),
-        aggregateIterator, 
+        aggregateIterator,
         db
       )
 
@@ -156,14 +156,14 @@ class Compiler(db: Database) extends LazyLogging {
 
   def sqlForBackend(
     oper: Operator
-  ): 
+  ):
     (SelectBody, Seq[(String,Type)]) =
   {
-    val optimized = { 
+    val optimized = {
       if(ExperimentalOptions.isEnabled("GPROM-OPTIMIZE")
         && db.backend.isInstanceOf[mimir.sql.GProMBackend] ) {
         OperatorTranslation.optimizeWithGProM(oper)
-      } else { 
+      } else {
         optimize(oper)
       }
     }
@@ -179,7 +179,7 @@ class Compiler(db: Database) extends LazyLogging {
     logger.info(s"SPECIALIZED: $specialized")
 
     logger.info(s"SCHEMA: ${oper.columnNames.mkString(", ")} -> ${optimized.columnNames.mkString(", ")}")
-    
+
     // Generate the SQL
     val sql = db.ra.convert(specialized)
 
@@ -187,7 +187,7 @@ class Compiler(db: Database) extends LazyLogging {
 
     return (sql, db.typechecker.schemaOf(optimized))
   }
-  
+
   // case class VirtualizedQuery(
   //   query: Operator,
   //   visibleSchema: Seq[(String, Type)],
@@ -200,4 +200,3 @@ class Compiler(db: Database) extends LazyLogging {
 
   def optimize(e: Expression): Expression = Optimizer.optimize(e, expressionOptimizations)
 }
-

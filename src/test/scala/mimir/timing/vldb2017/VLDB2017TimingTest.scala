@@ -2,12 +2,10 @@ package mimir.timing.vldb2017
 
 import java.util.Random
 import java.io.File
-
 import org.specs2.specification._
 import org.specs2.specification.core.Fragments
 import org.specs2.concurrent._
 import scala.concurrent.duration._
-
 
 import mimir.test.{SQLTestSpecification, PDBench, TestTimer}
 import mimir.util._
@@ -27,8 +25,7 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
   val tupleBundle = new TupleBundle( (0 until 10).map { _ => random.nextLong })
   val sampler     = new SampleRows( (0 until 10).map { _ => random.nextLong })
   val naiveMode = new NaiveMode((0 until 10).map { _ => random.nextLong })
-  val interleave = new InterleaveMode((0 until 10).map { _ => random.nextLong })
-
+  val interleaveMode = new InterleaveMode((0 until 10).map { _ => random.nextLong })
 
 
   def loadTable(tableFields:(String, String, Type, Double)) =
@@ -156,7 +153,6 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
         db.views(testTable).isMaterialized must beFalse
       }
     }
-
   }
 
   def createKeyRepairRowWiseLens(tableData: (String, (Seq[String], Seq[(String,String,Type,Double)])), tableSuffix: String = "_cleaned") =
@@ -243,6 +239,7 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
 
   def sampleFromLens(config : (String, Int)) =
   {
+
     val (queryString, idx) = config
     s"Sample From Lens ($idx): ${queryString}" >> {
       implicit ee: ExecutionEnv =>
@@ -251,13 +248,18 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
             println(s"SAMPLE QUERY $idx:\n$queryString")
             val ((rows, backendTime), totalTime) = time {
                var x = 0
-               val backendTime = db.query(queryString,interleave) { results =>
-                 time { results.foreach { row => {
-
-                 println(row)
-                 (x = x + 1)
-               }
-               } }
+               val backendTime = db.query(queryString,interleaveMode)
+               {
+                 results =>
+                 time {
+                   results.foreach {
+                     println("H!!!!!!!!!!!!!!!!")
+                     row => {
+                       println(row)
+//                       row.toString
+                       (x = x + 1)
+                     }
+                   } }
                }
                (x, backendTime._2)
             }
