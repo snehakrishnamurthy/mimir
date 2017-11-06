@@ -89,7 +89,7 @@ object ImputeTiming
           Seq(
             //
             s"""
-SELECT orderkey,discount from  lineitem_run_$i where  linestatus = 'F' and discount < 0.03 and tax = 0.03 and extendedprice > 84000 and quantity > 49 and returnflag = 'R' ;
+SELECT orderkey,discount from  lineitem_run_$i where  linestatus = 'F' and discount > 0.07 and tax = 0.03 and extendedprice > 84000 and quantity > 49 and returnflag = 'R' ;
             """"
 
             // ,
