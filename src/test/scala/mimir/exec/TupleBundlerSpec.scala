@@ -13,12 +13,12 @@ import org.specs2.specification.core.Fragments
 
 object TupleBundleSpec
   extends SQLTestSpecification("TupleBundler")
-  with BeforeAll 
+  with BeforeAll
 {
 
   sequential
 
-  def beforeAll = 
+  def beforeAll =
   {
     update("CREATE TABLE R(A int, B int, C int)")
     loadCSV("R", new File("test/r_test/r.csv"))
@@ -29,7 +29,7 @@ object TupleBundleSpec
   val rand = new Random(42)
   val numSamples = 10
   val bundler = new TupleBundle((0 until numSamples).map { _ => rand.nextLong })
-  def compileFlat(query: Operator) = bundler.compileFlat(query, db.models.get(_))
+  def compileFlat(query: Operator) = bundler.compileFlat(query, db.models.get(_),db)
   val allWorlds = WorldBits.fullBitVector(numSamples)
   val columnNames = TupleBundle.columnNames(_:String, numSamples)
 
@@ -55,16 +55,16 @@ object TupleBundleSpec
   "Tuple Bundle Evaluation" should {
     "Compile sanely" >> {
 
-      val q1 = 
+      val q1 =
         // db.compiler.optimize(
           compileFlat(select("""
             SELECT * FROM R_CLASSIC WHERE B = 2
           """))._1
         // )
       q1.columnNames must contain(eachOf(
-        "A", 
-        "MIMIR_SAMPLE_0_B", 
-        "MIMIR_SAMPLE_2_C", 
+        "A",
+        "MIMIR_SAMPLE_0_B",
+        "MIMIR_SAMPLE_2_C",
         "MIMIR_WORLD_BITS"
       ))
     }
@@ -76,17 +76,17 @@ object TupleBundleSpec
         """))._1
 
       val r1 =
-        db.query(q1){ _.map { row => 
+        db.query(q1){ _.map { row =>
           (
-            row("A").asLong.toInt, 
+            row("A").asLong.toInt,
             columnNames("B").map { row(_).asLong.toInt }.toSet
-          ) 
+          )
         }.toMap }
 
       // Deterministic rows.  Should always be there
       r1 must contain(eachOf( (2 -> Set(2)), (4 -> Set(2)) ))
 
-      // Nondeterministic rows.  Not a huge deal if this next case breaks.  
+      // Nondeterministic rows.  Not a huge deal if this next case breaks.
       // Poke the PRNG above or add more samples until this works again.
       r1(1) should contain(eachOf( 4, 2, 3 ))
 
@@ -101,9 +101,9 @@ object TupleBundleSpec
       q1.columnNames must beEqualTo(Seq("A", "MIMIR_WORLD_BITS"))
 
       val r1 =
-        db.query(q1) { _.map { row => 
+        db.query(q1) { _.map { row =>
             (row("A").asInt, row("MIMIR_WORLD_BITS").asLong)
-          }.toMap 
+          }.toMap
         }
 
       r1.keys should contain( eachOf(1, 2, 4) )
@@ -111,7 +111,7 @@ object TupleBundleSpec
         r1(2) must be equalTo ( allWorlds )
       }
 
-      // Nondeterministic rows.  Not a huge deal if this next case breaks.  
+      // Nondeterministic rows.  Not a huge deal if this next case breaks.
       // Poke the PRNG above or add more samples until this works again.
       conf(r1(1)) should beBetween(0.0, 0.6)
 
@@ -121,7 +121,7 @@ object TupleBundleSpec
     }
 
     "Evaluate Deterministic Aggregate Queries without Group-Bys" >> {
-      val q1 = 
+      val q1 =
         compileFlat(select("""
           SELECT SUM(A) AS A FROM R_CLASSIC
         """))._1
@@ -143,12 +143,12 @@ object TupleBundleSpec
 
 
     "Evaluate Aggregate Queries without Group-Bys" >> {
-      val q1 = 
+      val q1 =
         compileFlat(select("""
           SELECT SUM(B) AS B FROM R_CLASSIC
         """))._1
 
-      // This test assumes that compileFlat just splits 'B' into samples and 
+      // This test assumes that compileFlat just splits 'B' into samples and
       // adds a world bits column.
       q1.columnNames must beEqualTo(
         columnNames("B").toSeq ++ Seq("MIMIR_WORLD_BITS")
@@ -156,7 +156,7 @@ object TupleBundleSpec
 
       // Extract into (Seq(B values), worldBits)
       val r1 =
-        db.query(q1) { _.map { row => 
+        db.query(q1) { _.map { row =>
           ( columnNames("B").map { row(_).asInt }.toSeq, row("MIMIR_WORLD_BITS").asLong )
         }.toIndexedSeq }
 
@@ -171,7 +171,7 @@ object TupleBundleSpec
     }
 
     "Evaluate Aggregate Queries with Nondeterministic Aggregates" >> {
-      val q1 = 
+      val q1 =
         compileFlat(select("""
           SELECT A, SUM(B) AS B FROM R_CLASSIC GROUP BY A
         """))._1
@@ -182,9 +182,9 @@ object TupleBundleSpec
       )
 
       val r1:Map[Int, (Seq[Int], Long)] =
-        db.query(q1){ _.map { row => 
-          ( row("A").asInt -> 
-            ( columnNames("B").map { row(_).asInt }.toSeq, 
+        db.query(q1){ _.map { row =>
+          ( row("A").asInt ->
+            ( columnNames("B").map { row(_).asInt }.toSeq,
               row("MIMIR_WORLD_BITS").asLong
             )
           )
@@ -205,7 +205,7 @@ object TupleBundleSpec
     }
 
     "Evaluate Aggregate Queries with Nondeterministic Group-Bys" >> {
-      val q1 = 
+      val q1 =
         compileFlat(select("""
           SELECT B, SUM(A) AS A FROM R_CLASSIC GROUP BY B
         """))._1
@@ -215,7 +215,7 @@ object TupleBundleSpec
       )
 
       val r1: Map[Int, (Set[Int], Set[Int])] =
-        db.query(q1){ _.map { row => 
+        db.query(q1){ _.map { row =>
           val bv = row("MIMIR_WORLD_BITS").asLong
           ( row("B").asInt -> (
               TupleBundle.possibleValues(bv, columnNames("A").map { row(_) }).keySet.map { _.asInt },

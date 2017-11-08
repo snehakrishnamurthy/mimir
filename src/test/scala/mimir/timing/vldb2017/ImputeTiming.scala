@@ -70,7 +70,7 @@ object ImputeTiming
           Seq(
             //
             s"""
-               SELECT orderkey,discount from  lineitem_run_1 where  linestatus = 'F' and discount>0.07 and tax = 0.03 and extendedprice > 84000 and quantity > 49 and returnflag = 'R';
+select AVG(tax) from lineitem_run_$i where returnflag = 'A' group by discount;
                """
             //   -- TPC-H Query 3
             //   SELECT o.orderkey,

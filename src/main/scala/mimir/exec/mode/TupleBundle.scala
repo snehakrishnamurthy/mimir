@@ -9,6 +9,11 @@ import mimir.exec._
 import mimir.exec.result._
 import mimir.models.Model
 import com.typesafe.scalalogging.slf4j.LazyLogging
+import mimir.parser.MimirJSqlParser
+import net.sf.jsqlparser.statement.Statement
+import java.io.ByteArrayInputStream
+
+
 
 /**
  * TupleBundles ( http://dl.acm.org/citation.cfm?id=1376686 ) are a tactic for
@@ -18,8 +23,8 @@ import com.typesafe.scalalogging.slf4j.LazyLogging
  *
  * This class actually wraps three different compilation strategies inspired
  * by tuple bundles, each handling parallelization in a slightly different way
- * 
- * * **Long**:  Not technically "TupleBundles".  This approach simply unions 
+ *
+ * * **Long**:  Not technically "TupleBundles".  This approach simply unions
  * *            together a set of results, one per possible world sampled.
  * * **Flat**:  Creates a wide result, splitting each non-deterministic column
  *              into a set of columns, one per sample.
@@ -34,7 +39,7 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
   extends CompileMode[SampleResultIterator]
   with LazyLogging
 {
-  type MetadataT = 
+  type MetadataT =
   (
     Set[String],   // Nondeterministic column set
     Seq[String]    // Provenance columns
@@ -47,16 +52,41 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
     val (withProvenance, provenanceCols) = Provenance.compile(query)
     query = withProvenance
 
-    val (compiled, nonDeterministicColumns) = compileFlat(query, db.models.get(_))    
+    val (compiled, nonDeterministicColumns) = compileFlat(query, db.models.get(_),db)
     query = compiled
 
     query = db.views.resolve(query)
-
-    ( 
-      query, 
+    //println(query)
+    (
+      query,
       TupleBundle.splitColumnNames(queryRaw.columnNames, nonDeterministicColumns, seeds.length),
       (nonDeterministicColumns, provenanceCols)
     )
+  }
+
+
+  def getWorldBitQuery(db: Database): Operator =
+  {
+    if(!db.tableExists("WORLDBits")){
+      db.backend.update(s"""
+        CREATE TABLE WORLDBits(
+          MIMIR_WORLD_BITS int,
+          PRIMARY KEY (MIMIR_WORLD_BITS)
+        )
+      """)
+      val bits = List(1, 2, 4, 8, 16,32,64,128,256,512)
+      db.backend.fastUpdateBatch(s"""
+        INSERT INTO WORLDBits (MIMIR_WORLD_BITS) VALUES (?);
+      """,
+        bits.map { bit =>
+          Seq(IntPrimitive(bit))
+        }
+      )
+    }
+    var queryString = "select * from WORLDBits"
+    var parser = new MimirJSqlParser(new ByteArrayInputStream(queryString.getBytes));
+    val stmt: Statement = parser.Statement();
+    (db.sql.convert(stmt.asInstanceOf[net.sf.jsqlparser.statement.select.Select]))
   }
 
   def wrap(db: Database, results: ResultIterator, query: Operator, meta: MetadataT): SampleResultIterator =
@@ -83,15 +113,15 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
   def splitExpressionsByWorlds(expressions: Seq[Expression], nonDeterministicInputs: Set[String], models: (String => Model)): Seq[Seq[Expression]] =
   {
     val outputColumns =
-      seeds.zipWithIndex.map { case (seed, i) => 
-        val inputInstancesInThisSample = 
+      seeds.zipWithIndex.map { case (seed, i) =>
+        val inputInstancesInThisSample =
           nonDeterministicInputs.
             map { x => (x -> Var(TupleBundle.colNameInSample(x, i)) ) }.
             toMap
-        expressions.map { expression => 
+        expressions.map { expression =>
           CTAnalyzer.compileSample(
             Eval.inline(expression, inputInstancesInThisSample),
-            IntPrimitive(seed), 
+            IntPrimitive(seed),
             models
           )
         }
@@ -111,27 +141,26 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
       (0 until seeds.size).map { i =>
         val mergedSamples =
           baseSchema.map { col =>
-            ProjectArg(col, 
+            ProjectArg(col,
               if(nonDeterministicInput(col)){ Var(TupleBundle.colNameInSample(col, i)) }
               else { Var(col) }
             )
           } ++ Seq(
             ProjectArg(WorldBits.columnName, IntPrimitive(1 << i))
           )
-
         val filterWorldPredicate =
           Comparison(Cmp.Eq,
-            Arithmetic(Arith.BitAnd, 
+            Arithmetic(Arith.BitAnd,
               Var(WorldBits.columnName),
               IntPrimitive(1 << i)
             ),
             IntPrimitive(1 << i)
           )
-          
+
         InlineProjections(
           ProjectRedundantColumns(
             Project(
-              mergedSamples, 
+              mergedSamples,
               PushdownSelections(
                 Select(filterWorldPredicate, compiledQuery)
               )
@@ -140,12 +169,12 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
         )
       }
 
-    logger.trace(s"Converting FlatToLong: \n$compiledQuery\n ---> TO:\n${sampleShards(0)}")
+    //logger.trace(s"Converting FlatToLong: \n$compiledQuery\n ---> TO:\n${sampleShards(0)}")
 
     OperatorUtils.makeUnion(sampleShards)
   }
 
-  def compileFlat(query: Operator, models: (String => Model)): (Operator, Set[String]) =
+  def compileFlat(query: Operator, models: (String => Model), db: Database): (Operator, Set[String]) =
   {
     // Check for a shortcut opportunity... if the expression is deterministic, we're done!
     if(CTables.isDeterministic(query)){
@@ -157,7 +186,7 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
       )
     }
     query match {
-      case (Table(_,_,_,_) | EmptyTable(_)) => 
+      case (Table(_,_,_,_) | EmptyTable(_)) =>
         (
           query.addColumn(
             WorldBits.columnName -> IntPrimitive(WorldBits.fullBitVector(seeds.size))
@@ -166,12 +195,12 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
         )
 
       case Project(columns, oldChild) => {
-        val (newChild, nonDeterministicInput) = compileFlat(oldChild, models)
+        val (newChild, nonDeterministicInput) = compileFlat(oldChild, models,db)
 
         val (
           newColumns,
           nonDeterministicOutputs
-        ):(Seq[Seq[ProjectArg]], Seq[Set[String]]) = columns.map { col => 
+        ):(Seq[Seq[ProjectArg]], Seq[Set[String]]) = columns.map { col =>
             if(doesExpressionNeedSplit(col.expression, nonDeterministicInput)){
               (
                 splitExpressionByWorlds(col.expression, nonDeterministicInput, models).
@@ -194,7 +223,7 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
       }
 
       case Select(condition, oldChild) => {
-        val (newChild, nonDeterministicInput) = compileFlat(oldChild, models)
+        val (newChild, nonDeterministicInput) = compileFlat(oldChild, models,db)
 
         if(doesExpressionNeedSplit(condition, nonDeterministicInput)){
           val replacements = splitExpressionByWorlds(condition, nonDeterministicInput, models)
@@ -207,7 +236,7 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
               }.fold(IntPrimitive(0))(Arithmetic(Arith.BitOr, _, _))
             )
 
-          logger.debug(s"Updated World Bits: \n${updatedWorldBits}")
+          //logger.debug(s"Updated World Bits: \n${updatedWorldBits}")
           val newChildWithUpdatedWorldBits =
             OperatorUtils.replaceColumn(
               WorldBits.columnName,
@@ -227,8 +256,8 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
       }
 
       case Join(lhsOldChild, rhsOldChild) => {
-        val (lhsNewChild, lhsNonDeterministicInput) = compileFlat(lhsOldChild, models)
-        val (rhsNewChild, rhsNonDeterministicInput) = compileFlat(rhsOldChild, models)
+        val (lhsNewChild, lhsNonDeterministicInput) = compileFlat(lhsOldChild, models,db)
+        val (rhsNewChild, rhsNonDeterministicInput) = compileFlat(rhsOldChild, models,db)
 
         // To safely join the two together, we need to rename the world-bit columns
         val rewrittenJoin =
@@ -250,17 +279,17 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
       }
 
       case Union(lhsOldChild, rhsOldChild) => {
-        val (lhsNewChild, lhsNonDeterministicInput) = compileFlat(lhsOldChild, models)
-        val (rhsNewChild, rhsNonDeterministicInput) = compileFlat(rhsOldChild, models)
+        val (lhsNewChild, lhsNonDeterministicInput) = compileFlat(lhsOldChild, models,db)
+        val (rhsNewChild, rhsNonDeterministicInput) = compileFlat(rhsOldChild, models,db)
         val schema = query.columnNames
 
         val alignNonDeterminism = (
-          query: Operator, 
-          nonDeterministicInput: Set[String], 
+          query: Operator,
+          nonDeterministicInput: Set[String],
           nonDeterministicOutput: Set[String]
         ) => {
           Project(
-            schema.flatMap { col => 
+            schema.flatMap { col =>
               if(nonDeterministicOutput(col)){
                 if(nonDeterministicInput(col)){
                   WorldBits.sampleCols(col, seeds.size).map { sampleCol => ProjectArg(sampleCol, Var(sampleCol)) }
@@ -279,19 +308,19 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
           )
         }
 
-        val nonDeterministicOutput = 
+        val nonDeterministicOutput =
           lhsNonDeterministicInput ++ rhsNonDeterministicInput
         (
           Union(
             alignNonDeterminism(lhsNewChild, lhsNonDeterministicInput, nonDeterministicOutput),
             alignNonDeterminism(rhsNewChild, rhsNonDeterministicInput, nonDeterministicOutput)
-          ), 
+          ),
           nonDeterministicOutput
         )
       }
 
       case Aggregate(gbColumns, aggColumns, oldChild) => {
-        val (newChild, nonDeterministicInput) = compileFlat(oldChild, models)
+        val (newChild, nonDeterministicInput) = compileFlat(oldChild, models,db)
 
         // We divide the aggregate into two cases, an easy one and a hard one.
         //
@@ -301,19 +330,22 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
         // need to split one or more aggregate functions into possible-worlds, but
         // the core of the expression stays fixed.
         //
-        // The hard case is when even one of the group-by columns is 
+        // The hard case is when even one of the group-by columns is
         // non-deterministic.  When that happens, classical aggregation no longer
-        // really works in the same way, since a single tuple may contribute to 
+        // really works in the same way, since a single tuple may contribute to
         // potentially multiple groups.  What we do in that case is resort to 'Long'
         // rewriting, creating one tuple for every possible world.  These tuples then
         // get aggregated.
-        // 
+        //
 
         val oneOfTheGroupByColumnsIsNonDeterministic =
           gbColumns.map(_.name).exists(nonDeterministicInput(_))
 
         if(oneOfTheGroupByColumnsIsNonDeterministic){
-          logger.trace(s"Processing non-deterministic aggregate: \n$query")
+          //logger.trace(s"Processing non-deterministic aggregate: \n$query")
+
+
+
 
           // This is the hard case: One of the group-by columns is non-deterministic
           // We need to resort to evaluating the query with the 'Long' evaluation strategy.
@@ -323,7 +355,7 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
 
           // Split the aggregate columns.  Because a group-by attribute is uncertain, all
           // sources of uncertainty can be, potentially, non-deterministic.
-          // As a result, we convert expressions to aggregates over case statements:  
+          // As a result, we convert expressions to aggregates over case statements:
           // i.e., SUM(A) AS A becomes
           // SUM(CASE WHEN inputIsInWorld(1) THEN A ELSE NULL END) AS A_1,
           // SUM(CASE WHEN inputIsInWorld(2) THEN A ELSE NULL END) AS A_2,
@@ -332,11 +364,11 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
             aggColumns.map { case AggFunction(name, distinct, args, alias) =>
               val splitAggregates =
                 (0 until seeds.size).map { i =>
-                  AggFunction(name, distinct, 
-                    args.map { arg => 
+                  AggFunction(name, distinct,
+                    args.map { arg =>
                       Conditional(
                         Comparison(Cmp.Eq,
-                          Arithmetic(Arith.BitAnd, 
+                          Arithmetic(Arith.BitAnd,
                             Var(WorldBits.columnName),
                             IntPrimitive(1 << i)
                           ),
@@ -354,23 +386,23 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
 
           // We also need to figure out which worlds each group will be present in.
           // We take an OR of all of the worlds that lead to the aggregate being present.
-          val worldBitsAgg = 
+          val worldBitsAgg =
             AggFunction("GROUP_BITWISE_OR", false, Seq(Var(WorldBits.columnName)), WorldBits.columnName)
 
           (
             Aggregate(gbColumns, splitAggregates.flatten ++ Seq(worldBitsAgg), shardedChild),
             nonDeterministicOutputs.flatten.toSet
           )
-          
+
         } else {
 
-          logger.trace(s"Processing deterministic aggregate: \n$query")
+          //logger.trace(s"Processing deterministic aggregate: \n$query")
 
-          // This is the easy case: All of the group-by columns are non-deterministic 
+          // This is the easy case: All of the group-by columns are non-deterministic
           // and we can safely use classical aggregation to compute this expression.
 
           // As before we may need to split aggregate columns, but here we can first
-          // check to see if the aggregate expression depends on non-deterministic 
+          // check to see if the aggregate expression depends on non-deterministic
           // values.  If it does not, then we can avoid splitting it.
           val (splitAggregates, nonDeterministicOutputs) =
             aggColumns.map { case AggFunction(name, distinct, args, alias) =>
@@ -387,7 +419,7 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
 
           // Same deal as before: figure out which worlds the group will be present in.
 
-          val worldBitsAgg = 
+          val worldBitsAgg =
             AggFunction("GROUP_BITWISE_OR", false, Seq(Var(WorldBits.columnName)), WorldBits.columnName)
 
           (
@@ -402,7 +434,7 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
 
       // We don't handle materialized tuple bundles (at the moment)
       // so give up and drop the view.
-      case View(_, query, _) =>  compileFlat(query, models)
+      case View(_, query, _) =>  compileFlat(query, models,db)
 
       case ( Sort(_,_) | Limit(_,_,_) | LeftOuterJoin(_,_,_) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _) ) =>
         throw new RAException("Tuple-Bundler presently doesn't support LeftOuterJoin, Sort, or Limit (probably need to resort to 'Long' evaluation)")
@@ -451,9 +483,9 @@ object TupleBundle
   def mostLikelyValue(bv: Long, worlds: Seq[(PrimitiveValue, Double)]): Option[PrimitiveValue] =
   {
     val p = possibleValuesWithProbability(bv, worlds)
-    if(p.isEmpty){ 
-      return None 
-    } else { 
+    if(p.isEmpty){
+      return None
+    } else {
       return Some(p.maxBy(_._2)._1)
     }
   }
@@ -476,7 +508,7 @@ object WorldBits
 
   def confidence(bv: Long, numSamples: Int): Double =
   {
-    val hits = 
+    val hits =
       (0 until numSamples).
         count( isInWorld(bv, _) )
 
