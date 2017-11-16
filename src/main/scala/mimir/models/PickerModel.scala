@@ -11,41 +11,41 @@ import mimir.ml.spark.SparkML.{SparkModelGeneratorParams => ModelParams }
 
 /**
  * A model representing a key-repair choice.
- * 
+ *
  * The index is ignored.
- * The one argument is a value for the key.  
+ * The one argument is a value for the key.
  * The return value is an integer identifying the ordinal position of the selected value, starting with 0.
  */
 @SerialVersionUID(1000L)
-class PickerModel(override val name: String, resultColumn:String, pickFromCols:Seq[String], colTypes:Seq[Type], useClassifier:Option[(() => SparkML, SparkML.SparkModelGenerator)], classifyUpFrontAndCache:Boolean, source: Operator) 
-  extends Model(name) 
+class PickerModel(override val name: String, resultColumn:String, pickFromCols:Seq[String], colTypes:Seq[Type], useClassifier:Option[(() => SparkML, SparkML.SparkModelGenerator)], classifyUpFrontAndCache:Boolean, source: Operator)
+  extends Model(name)
   with Serializable
   with NeedsReconnectToDatabase
   with FiniteDiscreteDomain
 {
-  
+
   val feedback = scala.collection.mutable.Map[String,PrimitiveValue]()
   val classificationCache = scala.collection.mutable.Map[String,PrimitiveValue]()
   val TRAINING_LIMIT = 10000
   var classifierModel: Option[SparkML.SparkModel] = None
   var sparkMLInstance: Option[() => SparkML] = None
-  var classifyAllPredictions:Option[Map[String, Seq[(String, Double)]]] = None 
-  
+  var classifyAllPredictions:Option[Map[String, Seq[(String, Double)]]] = None
+
   @transient var db: Database = null
-  
-  private def classToPrimitive(value:String): PrimitiveValue = 
+
+  private def classToPrimitive(value:String): PrimitiveValue =
   {
     TextUtils.parsePrimitive(colTypes(0), value)
   }
-  
+
   private def pickFromArgs(args: Seq[PrimitiveValue], value:Option[PrimitiveValue] = None) : PrimitiveValue = {
     value match {
-      case None => 
+      case None =>
         pickFromCols.zipWithIndex.foldLeft(NullPrimitive():PrimitiveValue)( (init, elem) => init match {
           case NullPrimitive() => args(elem._2+1)
           case x => x
         })
-      case Some(v) => 
+      case Some(v) =>
         pickFromCols.zipWithIndex.foldLeft(NullPrimitive():PrimitiveValue)( (init, elem) => (init, args(elem._2+1), v) match {
           case (NullPrimitive(), NullPrimitive(), _) => init
           case (NullPrimitive(), _, _) => args(elem._2+1)
@@ -56,9 +56,9 @@ class PickerModel(override val name: String, resultColumn:String, pickFromCols:S
           case (d1:DatePrimitive, d2:DatePrimitive, d3:DatePrimitive) => if(Math.abs(d1.asDateTime.getMillis-d3.asDateTime.getMillis)<Math.abs(d2.asDateTime.getMillis-d3.asDateTime.getMillis)) d1 else d2
           case (d1:TimestampPrimitive, d2:TimestampPrimitive, d3:TimestampPrimitive) => if(Math.abs(d1.asDateTime.getMillis-d3.asDateTime.getMillis)<Math.abs(d2.asDateTime.getMillis-d3.asDateTime.getMillis)) d1 else d2
           case (d1:IntervalPrimitive, d2:IntervalPrimitive, d3:IntervalPrimitive) => if(Math.abs(d1.asInterval.getMillis-d3.asInterval.getMillis)<Math.abs(d2.asInterval.getMillis-d3.asInterval.getMillis)) d1 else d2
-          case (p1@BoolPrimitive(b1), p2@BoolPrimitive(b2), BoolPrimitive(b3)) => if(b1 && b3)p1 else p2 
+          case (p1@BoolPrimitive(b1), p2@BoolPrimitive(b2), BoolPrimitive(b3)) => if(b1 && b3)p1 else p2
           case (p1@RowIdPrimitive(s1), p2@RowIdPrimitive(s2), RowIdPrimitive(s3)) => if(s1.equals(s3)) p1 else p2
-          case (p1@TypePrimitive(t1), p2@TypePrimitive(t2), TypePrimitive(t3)) => if(t1.equals(t3)) p1 else p2 
+          case (p1@TypePrimitive(t1), p2@TypePrimitive(t2), TypePrimitive(t3)) => if(t1.equals(t3)) p1 else p2
           case _ => throw new RAException("Something really wrong is going on")
         })
     }
@@ -77,16 +77,16 @@ class PickerModel(override val name: String, resultColumn:String, pickFromCols:S
         val arg2 = args(2)
         useClassifier match { //use result of case expression
           case None => hints(0)
-          case Some((sparmMLInst, modelGen)) => 
+          case Some((sparmMLInst, modelGen)) =>
             classificationCache.get(rowid) match {
               case None => {
                 if(classifyUpFrontAndCache){
                   classifyAll()
-                  pickFromArgs(args, classificationCache.get(rowid)) 
+                  pickFromArgs(args, classificationCache.get(rowid))
                 }
                 else
                   classify(idx, args, hints) match {
-                    case Seq() => pickFromArgs(args) 
+                    case Seq() => pickFromArgs(args)
                     case x => {
                       val prediction = classToPrimitive( x.head._1 )
                       classificationCache(rowid) = prediction
@@ -98,7 +98,7 @@ class PickerModel(override val name: String, resultColumn:String, pickFromCols:S
             }
         }
       }
-      
+
     }
   }
   def sample(idx: Int, randomness: Random, args: Seq[PrimitiveValue], hints: Seq[PrimitiveValue]) = {
@@ -122,7 +122,7 @@ class PickerModel(override val name: String, resultColumn:String, pickFromCols:S
         }) match {
           case Seq() => pickFromArgs(args, Some(classToPrimitive("0")))
           case classes => pickFromArgs(args, Some(classToPrimitive(RandUtils.pickFromWeightedList(randomness, classes))))
-        } 
+        }
       }
     }
   }
@@ -139,7 +139,7 @@ class PickerModel(override val name: String, resultColumn:String, pickFromCols:S
       }
     }
   }
-  def feedback(idx: Int, args: Seq[PrimitiveValue], v: PrimitiveValue): Unit = { 
+  def feedback(idx: Int, args: Seq[PrimitiveValue], v: PrimitiveValue): Unit = {
     val rowid = args(0).asString
     feedback(rowid) = v
   }
@@ -147,14 +147,14 @@ class PickerModel(override val name: String, resultColumn:String, pickFromCols:S
     feedback contains(args(0).asString)
   }
   def hintTypes(idx: Int): Seq[mimir.algebra.Type] = Seq(TAny())
-   
-  
+
+
   def getDomain(idx: Int, args: Seq[PrimitiveValue], hints:Seq[PrimitiveValue]): Seq[(PrimitiveValue,Double)] = Seq((hints(0), 0.0))
-  
-  def reconnectToDatabase(db: Database) = { 
-    this.db = db 
+
+  def reconnectToDatabase(db: Database) = {
+    this.db = db
   }
-  
+
   def train(sparkMLInstModelGen:(() => SparkML,SparkML.SparkModelGenerator)) : (SparkML, SparkML.SparkModel) = {
     val (sparkMLInst, modelGen) = sparkMLInstModelGen
     val trainingQuery = Limit(0, Some(TRAINING_LIMIT), Sort(Seq(SortColumn(Function("random", Seq()), true)), Project(pickFromCols.map(col => ProjectArg(col, Var(col))), source)))
@@ -163,7 +163,7 @@ class PickerModel(override val name: String, resultColumn:String, pickFromCols:S
     db.models.persist(this)
     (sparkMLInst(), classifierModel.get)
   }
-  
+
   def classify(idx:Int, args: Seq[PrimitiveValue], hints: Seq[PrimitiveValue]) : Seq[(String,Double)] = {
     val (sparkMLInst, classifier) = classifierModel match {
       case None => train(useClassifier.get)
@@ -173,7 +173,7 @@ class PickerModel(override val name: String, resultColumn:String, pickFromCols:S
     //predictions.show()
     predictions.unzip._2
   }
-  
+
   def classifyAll() : Unit = {
     val (sparkMLInst, classifier) = classifierModel match {
       case None => train(useClassifier.get)
@@ -186,14 +186,11 @@ class PickerModel(override val name: String, resultColumn:String, pickFromCols:S
     val predictions = sparkMLInst.applyModel(classifier, ("rowid", TString()) +: (pickFromCols.zip(colTypes)), tuples)
     val predictionMap = sparkMLInst.extractPredictions(classifier, predictions).groupBy(_._1).map { case (k,v) => (k,v.map(_._2))}
     classifyAllPredictions = Some(predictionMap)
-    
+
     predictionMap.map(mapEntry => {
       classificationCache(mapEntry._1) = classToPrimitive( mapEntry._2(0)._1)
     })
-    
-    db.models.persist(this)   
+
+    db.models.persist(this)
   }
 }
-
-
-

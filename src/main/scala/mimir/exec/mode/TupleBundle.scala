@@ -524,3 +524,37 @@ object WorldBits
   def fullBitVector(numSamples: Int) =
     (0 until numSamples).map { 1 << _ }.fold(0)( _ | _ )
 }
+
+object WorldILBits
+  extends LazyLogging
+{
+  val columnName = "MIMIR_IL_WORLD_BITS"
+
+  def isInWorld(bv: Long, worldId: Int): Boolean =
+    ((bv & (1 << worldId)) > 0)
+
+  def worlds(bv: Long, numSamples: Int): Set[Int] =
+  {
+    (0 until numSamples).
+      filter( isInWorld(bv, _) ).
+      toSet
+  }
+
+  def confidence(bv: Long, numSamples: Int): Double =
+  {
+    val hits =
+      (0 until numSamples).
+        count( isInWorld(bv, _) )
+
+    logger.debug(s"Testing: $bv <- $hits bits set")
+    hits.toDouble / numSamples.toDouble
+  }
+
+  def sampleCols(col: String, numSamples: Int): Seq[String] =
+  {
+    (0 until numSamples).map { i => TupleBundle.colNameInSample(col, i) }
+  }
+
+  def fullBitVector(numSamples: Int) =
+    (0 until numSamples).map { 1 << _ }.fold(0)( _ | _ )
+}
