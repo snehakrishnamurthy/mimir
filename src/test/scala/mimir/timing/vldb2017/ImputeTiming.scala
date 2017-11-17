@@ -70,7 +70,7 @@ object ImputeTiming
           Seq(
             //
             s"""
-select AVG(tax) from lineitem_run_$i where returnflag = 'A' group by discount;
+                 select l.partkey,l.quantity from lineitem_run_$i as l,orders_run_$i as o where l.orderkey = o.orderkey;
                """
             //   -- TPC-H Query 3
             //   SELECT o.orderkey,

@@ -26,6 +26,7 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
   val sampler     = new SampleRows( (0 until 10).map { _ => random.nextLong })
   val naiveMode = new NaiveMode((0 until 10).map { _ => random.nextLong })
   val interleaveMode = new InterleaveMode((0 until 10).map { _ => random.nextLong })
+  val hybridmode = new HeuristicHybridMode((0 until 10).map { _ => random.nextLong })
 
 
   def loadTable(tableFields:(String, String, Type, Double)) =
@@ -248,14 +249,13 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
             println(s"SAMPLE QUERY $idx:\n$queryString")
             val ((rows, backendTime), totalTime) = time {
                var x = 0
-               val backendTime = db.query(queryString,tupleBundle)
+               val backendTime = db.query(queryString,hybridmode)
                {
                  results =>
                  time {
                    results.foreach {
-                     println("H!!!!!!!!!!!!!!!!")
                      row => {
-                       println(row)
+                       //println(row)
 //                       row.toString
                        (x = x + 1)
                      }

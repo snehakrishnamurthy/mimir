@@ -198,7 +198,7 @@ class HeuristicHybridMode(seeds: Seq[Long] = (0l until 10l).toSeq)
               }.fold(IntPrimitive(0))(Arithmetic(Arith.BitOr, _, _))
             )
 
-          logger.debug(s"Updated World Bits: \n${updatedWorldBits}")
+
           val newChildWithUpdatedWorldBits =
             OperatorUtils.replaceColumn(
               WorldBits.columnName,
@@ -218,8 +218,8 @@ class HeuristicHybridMode(seeds: Seq[Long] = (0l until 10l).toSeq)
       }
 
       case Join(lhsOldChild, rhsOldChild) => {
-        val (lhsNewChild, lhsNonDeterministicInput) = compileHeuristicHybrid(lhsOldChild, db)
-        val (rhsNewChild, rhsNonDeterministicInput) = compileHeuristicHybrid(rhsOldChild, db)
+        var (lhsNewChild, lhsNonDeterministicInput) = compileHeuristicHybrid(lhsOldChild, db)
+        var (rhsNewChild, rhsNonDeterministicInput) = compileHeuristicHybrid(rhsOldChild, db)
 
         // To safely join the two together, we need to rename the world-bit columns
 
@@ -236,7 +236,7 @@ class HeuristicHybridMode(seeds: Seq[Long] = (0l until 10l).toSeq)
             var lnpArgs = joinQuery.columnNames.map { cols =>
               ProjectArg(cols, Var(cols))
             }
-            var projQuery = Project(lnpArgs, joinQuery)
+            lhsNewChild = Project(lnpArgs, joinQuery)
           }
           else {
             lhsNewChild.addColumn(
@@ -255,13 +255,14 @@ class HeuristicHybridMode(seeds: Seq[Long] = (0l until 10l).toSeq)
             var rnpArgs = joinQuery.columnNames.map { cols =>
               ProjectArg(cols, Var(cols))
             }
-            var projQuery = Project(rnpArgs, joinQuery)
+            rhsNewChild = Project(rnpArgs, joinQuery)
           }
           else {
-            rhsNewChild.addColumn(
+            rhsNewChild=rhsNewChild.addColumn(
               WorldILBits.columnName -> IntPrimitive(WorldILBits.fullBitVector(seeds.size))
             )
           }
+
 
           val rewrittenJoin =
             OperatorUtils.joinMergingColumns(
@@ -318,7 +319,7 @@ class HeuristicHybridMode(seeds: Seq[Long] = (0l until 10l).toSeq)
 
       case Aggregate(gbColumns, aggColumns, oldChild) => {
         val (newChild, nonDeterministicInput) = compileHeuristicHybrid(oldChild, db)
-        if(joinCertain){
+        if(true){
           val oneOfTheGroupByColumnsIsNonDeterministic =
             gbColumns.map(_.name).exists(nonDeterministicInput(_))
 
@@ -422,7 +423,6 @@ class HeuristicHybridMode(seeds: Seq[Long] = (0l until 10l).toSeq)
 
           } else {
 
-            logger.trace(s"Processing deterministic aggregate: \n$query")
 
             // This is the easy case: All of the group-by columns are non-deterministic
             // and we can safely use classical aggregation to compute this expression.
@@ -563,7 +563,6 @@ class HeuristicHybridMode(seeds: Seq[Long] = (0l until 10l).toSeq)
 
           } else {
 
-            logger.trace(s"Processing deterministic aggregate: \n$query")
 
             // This is the easy case: All of the group-by columns are non-deterministic
             // and we can safely use classical aggregation to compute this expression.
