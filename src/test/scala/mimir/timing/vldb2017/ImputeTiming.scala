@@ -70,8 +70,7 @@ object ImputeTiming
           Seq(
             //
             s"""
-                 select l.partkey,l.quantity from lineitem_run_$i as l,orders_run_$i as o where l.orderkey = o.orderkey;
-               """
+select p.type from lineitem_run_$i as l,part as p where l.partkey = p.partkey and p.mfgr = 'Manufacturer#1' and p.brand = 'Brand#13'and  p.size = 50 and l.tax = 0.02;               """
             //   -- TPC-H Query 3
             //   SELECT o.orderkey,
             //          o.orderdate,
