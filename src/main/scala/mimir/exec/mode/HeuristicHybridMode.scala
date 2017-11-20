@@ -304,6 +304,8 @@
           case (Table(_, _, _, _) | EmptyTable(_)) => {
             var tableName = (query.asInstanceOf[Table]).getTableName
             var schema  = (query.asInstanceOf[Table]).getSchema
+            var alias  = (query.asInstanceOf[Table]).getAlias
+
             println(nonDeterministicInput)
             listOfJoins.map{
               col =>
@@ -312,25 +314,30 @@
 
               if(col.getTable1.equals(tableName)){
                 for(i <- 0 until schema.length ){
-                  if((schema(i)_1).equals(col.getCol1) && nonDeterministicInput.contains(col.getCol1)){
+                  var cols = col.getCol1;
+                  if(alias!=null){
+                    cols = alias+"_"+cols
+                  }
+                  println(cols)
+                  if((schema(i)_1).equals(col.getCol1) && nonDeterministicInput.contains(cols)){
                     return true
-                  }else{
-                    return false
                   }
 
                 }
+                return false;
               }else if(col.getTable2.equals(tableName)){
                 for(i <- 0 until schema.length ){
-                  if((schema(i)_1).equals(col.getCol2) && nonDeterministicInput.contains(col.getCol2)){
-                    return true
-                  }else{
-                    return false
+                  var cols = col.getCol1;
+                  if(alias!=null){
+                    cols = alias+"_"+cols
                   }
-
+                  println(cols)
+                  if((schema(i)_1).equals(col.getCol2) && nonDeterministicInput.contains(cols)){
+                    return true
+                  }
                 }
-
+                return false
               }
-
             }
             (false)
           }
@@ -380,12 +387,12 @@
         }
     }
 
-    def compileHeuristicHybrid(query: Operator, db: Database): (Operator, Set[String]) = {
+    def compileHeuristicHybrid(query: Operator, db: Database): (Operator, Set[String],String) = {
       // Check for a shortcut opportunity... if the expression is deterministic, we're done!
       if (CTables.isDeterministic(query)) {
         return (query.addColumn(
           WorldBits.columnName -> IntPrimitive(WorldBits.fullBitVector(seeds.size))
-        ), Set[String]())
+        ), Set[String](),"TB")
 
       }
       query match {
@@ -395,11 +402,11 @@
             query.addColumn(
               WorldBits.columnName -> IntPrimitive(WorldBits.fullBitVector(seeds.size))
             ),
-            Set[String]()
+            Set[String](),"TB"
           )
         }
         case Project(columns, oldChild) => {
-          val (newChild, nonDeterministicInput) = compileHeuristicHybrid(oldChild, db)
+          val (newChild, nonDeterministicInput,mode) = compileHeuristicHybrid(oldChild, db)
 
           val (
             newColumns,
@@ -423,12 +430,12 @@
               newChild
             )
 
-          (replacementProjection, nonDeterministicOutputs.flatten.toSet)
+          (replacementProjection, nonDeterministicOutputs.flatten.toSet,"TB")
         }
 
         case Select(condition, oldChild) => {
           DetermineJoins(condition, query)
-          val (newChild, nonDeterministicInput) = compileHeuristicHybrid(oldChild, db)
+          val (newChild, nonDeterministicInput,mode) = compileHeuristicHybrid(oldChild, db)
 
           if (doesExpressionNeedSplit(condition, nonDeterministicInput)) {
             val replacements = splitExpressionByWorlds(condition, nonDeterministicInput, db.models.get(_))
@@ -453,16 +460,16 @@
                 Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
                 newChildWithUpdatedWorldBits
               ),
-              nonDeterministicInput
+              nonDeterministicInput,"TB"
             )
           } else {
-            (Select(condition, newChild), nonDeterministicInput)
+            (Select(condition, newChild), nonDeterministicInput,"TB")
           }
         }
 
         case Join(lhsOldChild, rhsOldChild) => {
-          var (lhsNewChild, lhsNonDeterministicInput) = compileHeuristicHybrid(lhsOldChild, db)
-          var (rhsNewChild, rhsNonDeterministicInput) = compileHeuristicHybrid(rhsOldChild, db)
+          var (lhsNewChild, lhsNonDeterministicInput,mode) = compileHeuristicHybrid(lhsOldChild, db)
+          var (rhsNewChild, rhsNonDeterministicInput.mode) = compileHeuristicHybrid(rhsOldChild, db)
 
           // To safely join the two together, we need to rename the world-bit columns
           if (IsNonDeterministic(lhsNewChild,lhsNonDeterministicInput)|| IsNonDeterministic(rhsNewChild,rhsNonDeterministicInput)) {
@@ -543,13 +550,21 @@
                 lhsNewChild, rhsNewChild
               )
 
-            val completedJoin =
+            var completedJoin =
               Select(
                 Comparison(Cmp.Neq, Var(WorldILBits.columnName), IntPrimitive(0)),
                 rewrittenJoin
               )
+            completedJoin = completedJoin.columnNames.map{
+              cols = >
+              if(cols.equals(WorldILBits.columnName)){
+                ProjectArg(WorldBits.columnName,Var(cols))
+              }else{
+                ProjectArg(cols,Var(cols))
+              }
+            }
 
-            (completedJoin, lhsNonDeterministicInput ++ rhsNonDeterministicInput)
+            (completedJoin, lhsNonDeterministicInput ++ rhsNonDeterministicInput,"IL")
           }
           else {
             // To safely join the two together, we need to rename the world-bit columns
@@ -568,13 +583,13 @@
                 rewrittenJoin
               )
 
-            (completedJoin, lhsNonDeterministicInput ++ rhsNonDeterministicInput)
+            (completedJoin, lhsNonDeterministicInput ++ rhsNonDeterministicInput,"TB")
           }
         }
 
         case Union(lhsOldChild, rhsOldChild) => {
-          val (lhsNewChild, lhsNonDeterministicInput) = compileHeuristicHybrid(lhsOldChild, db)
-          val (rhsNewChild, rhsNonDeterministicInput) = compileHeuristicHybrid(rhsOldChild, db)
+          val (lhsNewChild, lhsNonDeterministicInput,mode) = compileHeuristicHybrid(lhsOldChild, db)
+          val (rhsNewChild, rhsNonDeterministicInput,mode) = compileHeuristicHybrid(rhsOldChild, db)
 
           val nonDeterministicOutput =
             lhsNonDeterministicInput ++ rhsNonDeterministicInput
@@ -583,27 +598,18 @@
               lhsNewChild,
               rhsNewChild
             ),
-            nonDeterministicOutput
+            nonDeterministicOutput,"TB"
           )
         }
 
         case Aggregate(gbColumns, aggColumns, oldChild) => {
-          val (newChild, nonDeterministicInput) = compileHeuristicHybrid(oldChild, db)
+          val (newChild, nonDeterministicInput,mode) = compileHeuristicHybrid(oldChild, db)
 
-  //        if(true){
+         if(mode.equals("TB")){
             val oneOfTheGroupByColumnsIsNonDeterministic =
               gbColumns.map(_.name).exists(nonDeterministicInput(_))
 
             if(oneOfTheGroupByColumnsIsNonDeterministic){
-              //          logger.trace(s"Processing non-deterministic aggregate: \n$query")
-
-              // This is the hard case: One of the group-by columns is non-deterministic
-              // We need to resort to evaluating the query with the 'Long' evaluation strategy.
-              // If we created our own evaluation engine, we could get around this limitation, but
-              // as long as we need to run on a normal backend, this is required.
-              //          val shardedChild = convertFlatToLong(newChild, oldChild.columnNames, nonDeterministicInput)
-
-
 
 
               var worldQuery = getWorldBitQuery(db)
@@ -691,7 +697,7 @@
 
               (
                 Aggregate(gbColumns, splitAggregates.flatten ++ Seq(worldBitsAgg), shardedChild),
-                nonDeterministicOutputs.flatten.toSet
+                nonDeterministicOutputs.flatten.toSet,"IL"
               )
 
             } else {
@@ -723,7 +729,7 @@
 
               (
                 Aggregate(gbColumns, splitAggregates.flatten ++ Seq(worldBitsAgg), newChild),
-                nonDeterministicOutputs.flatten.toSet
+                nonDeterministicOutputs.flatten.toSet,"TB"
               )
 
             }

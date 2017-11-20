@@ -84,7 +84,7 @@ sealed abstract class Operator
 /**
  * A single column output by a projection
  */
-case class ProjectArg(name: String, expression: Expression) 
+case class ProjectArg(name: String, expression: Expression)
   extends Serializable
 {
   override def toString = (name.toString + " <= " + expression.toString)
@@ -313,6 +313,7 @@ case class Table(name: String,
   extends Operator
 {
   def getTableName = (name)
+  def getAlias = (alias)
   def getSchema = (sch)
   def toString(prefix: String) =
     prefix + name + "(" + (
