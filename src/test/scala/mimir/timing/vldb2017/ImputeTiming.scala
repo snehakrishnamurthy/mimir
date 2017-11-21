@@ -70,7 +70,8 @@ object ImputeTiming
           Seq(
             //
             s"""
-select p.type from lineitem_run_$i as l,part as p where l.partkey = p.partkey and p.mfgr = 'Manufacturer#1' and p.brand = 'Brand#13'and  p.size = 50 and l.tax = 0.02;               """
+select first(orderkey), first(custkey), first(comment) from orders_run_$i group by shippriority;
+              """
             //   -- TPC-H Query 3
             //   SELECT o.orderkey,
             //          o.orderdate,

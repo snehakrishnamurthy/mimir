@@ -300,7 +300,7 @@ class InterleaveMode(seeds: Seq[Long] = (0l until 10l).toSeq)
 
       case Aggregate(gbColumns, aggColumns, oldChild) => {
         val (newChild, nonDeterministicInput) = compileInterleaved(oldChild, db)
-
+        println(newChild)
         (
           Aggregate(gbColumns++Seq(Var(WorldBits.columnName)), aggColumns,
             newChild),nonDeterministicInput

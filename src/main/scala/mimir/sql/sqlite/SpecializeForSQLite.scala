@@ -12,27 +12,27 @@ object SpecializeForSQLite {
   def apply(e: Expression): Expression =
   {
     (e match {
-  
-      case Function("CAST", Seq(target, TypePrimitive(t))) => 
+
+      case Function("CAST", Seq(target, TypePrimitive(t))) =>
         {//println("TYPE ID: "+t.id(t))
           Function("MIMIRCAST", Seq(target, IntPrimitive(Type.id(t))))}
 
       case Function("CAST", _) =>
         throw new SQLException("Invalid CAST: "+e)
 
-      case Function("YEAR_PART", Seq(d)) => 
+      case Function("YEAR_PART", Seq(d)) =>
         Function("CAST", Seq(
           Function("STRFTIME", Seq(StringPrimitive("%Y"), d)),
           TypePrimitive(TInt())
         ))
 
-      case Function("MONTH_PART", Seq(d)) => 
+      case Function("MONTH_PART", Seq(d)) =>
         Function("CAST", Seq(
           Function("STRFTIME", Seq(StringPrimitive("%m"), d)),
           TypePrimitive(TInt())
         ))
 
-      case Function("DAY_PART", Seq(d)) => 
+      case Function("DAY_PART", Seq(d)) =>
         Function("CAST", Seq(
           Function("STRFTIME", Seq(StringPrimitive("%d"), d)),
           TypePrimitive(TInt())
@@ -62,24 +62,24 @@ object SpecializeForSQLite {
           case t        => AggFunction("FIRST", d, args, alias)
         }
       case x => x
-    }    
+    }
   }
 
-  def apply(o: Operator, db: Database): Operator = 
+  def apply(o: Operator, db: Database): Operator =
   {
-    o.recurExpressions( 
-      apply(_:Expression) 
+    o.recurExpressions(
+      apply(_:Expression)
     ) match {
       case Aggregate(gb, agg, source) => {
 
         Aggregate(
           gb,
-          agg.map( apply(_:AggFunction, db.typechecker.typeOf(_, o)) ),
+          agg.map( apply(_:AggFunction, db.typechecker.typeOf(_,source)) ),
           apply(source, db)
         )
       }
 
-      case o2 => 
+      case o2 =>
         o2.recur( apply(_:Operator, db) )
     }
   }
