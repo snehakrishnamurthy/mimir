@@ -70,8 +70,8 @@ object ImputeTiming
           Seq(
             //
             s"""
-select first(orderkey), first(custkey), first(comment) from orders_run_$i group by shippriority;
-              """
+            select l.orderkey from lineitem_run_$i as l where l.orderkey>599000 order by l.tax;
+           """
             //   -- TPC-H Query 3
             //   SELECT o.orderkey,
             //          o.orderdate,

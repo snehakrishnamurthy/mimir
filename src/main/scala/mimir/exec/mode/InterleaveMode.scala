@@ -13,6 +13,8 @@ import mimir.models.Model
 import com.typesafe.scalalogging.slf4j.LazyLogging
 import mimir.parser.MimirJSqlParser
 import net.sf.jsqlparser.statement.Statement
+import scala.collection.mutable.ArrayBuffer
+
 
 /**
   * TupleBundles ( http://dl.acm.org/citation.cfm?id=1376686 ) are a tactic for
@@ -57,7 +59,6 @@ class InterleaveMode(seeds: Seq[Long] = (0l until 10l).toSeq)
     val (compiled, nonDeterministicColumns) = compileInterleaved(query, db)
     query = compiled
     query = db.views.resolve(query)
-    println(query)
     (
       query,
       //TO-DO check if this is right
@@ -234,7 +235,6 @@ class InterleaveMode(seeds: Seq[Long] = (0l until 10l).toSeq)
             (col, Set[String]())
           }
         }.unzip
-
         val replacementProjection =
           Project(
             newColumns ++ Seq(ProjectArg(WorldBits.columnName, Var(WorldBits.columnName))),
@@ -299,8 +299,11 @@ class InterleaveMode(seeds: Seq[Long] = (0l until 10l).toSeq)
       }
 
       case Aggregate(gbColumns, aggColumns, oldChild) => {
-        val (newChild, nonDeterministicInput) = compileInterleaved(oldChild, db)
-        println(newChild)
+        var (newChild, nonDeterministicInput) = compileInterleaved(oldChild, db)
+
+
+
+
         (
           Aggregate(gbColumns++Seq(Var(WorldBits.columnName)), aggColumns,
             newChild),nonDeterministicInput

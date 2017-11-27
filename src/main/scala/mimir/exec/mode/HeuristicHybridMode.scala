@@ -1,403 +1,223 @@
 
-  package mimir.exec.mode
+package mimir.exec.mode
+
+import mimir.exec.mode.JoinInfo
+import java.io.ByteArrayInputStream
+
+import mimir.Database
+import mimir.optimizer.operator._
+import mimir.algebra._
+import mimir.ctables._
+import mimir.provenance._
+import mimir.exec._
+import mimir.exec.result._
+import mimir.models.Model
+import com.typesafe.scalalogging.slf4j.LazyLogging
+import mimir.ctables.CTables.isProbabilistic
+import mimir.parser.MimirJSqlParser
+import net.sf.jsqlparser.statement.Statement
+
+import scala.collection.mutable
+import scala.collection.mutable.{ArrayBuffer, Queue}
+
+/**
+  * TupleBundles ( http://dl.acm.org/citation.cfm?id=1376686 ) are a tactic for
+  * computing over probabilistic data.  Loosely put, the approach is to compile
+  * the query to evaluate simultaneously in N possible worlds.  The results can
+  * then be aggregated to produce an assortment of statistics, etc...
+  *
+  * This class actually wraps three different compilation strategies inspired
+  * by tuple bundles, each handling parallelization in a slightly different way
+  *
+  * * **Long**:  Not technically "TupleBundles".  This approach simply unions
+  * *            together a set of results, one per possible world sampled.
+  * * **Flat**:  Creates a wide result, splitting each non-deterministic column
+  * into a set of columns, one per sample.
+  * * **Array**: Like flat, but uses native array types to avoid overpopulating
+  * the result schema.
+  *
+  * At present, only 'Flat' is fully implemented, although a 'Long'-like approach
+  * can be achieved by using convertFlatToLong.
+  */
+
+class HeuristicHybridMode(seeds: Seq[Long] = (0l until 10l).toSeq)
+  extends CompileMode[SampleResultIterator]
+    with LazyLogging {
+  var limit = false
+  var listOfJoins = ArrayBuffer[JoinInfo]()
+  type MetadataT =
+    (
+      Set[String], // Nondeterministic column set
+        Seq[String] // Provenance columns
+      )
 
 
-  import java.io.ByteArrayInputStream
+  def rewrite(db: Database, queryRaw: Operator): (Operator, Seq[String], MetadataT) = {
+    var query = queryRaw
+    val (withProvenance, provenanceCols) = Provenance.compile(query)
+    query = withProvenance
+    var queueOfOperations = ChooseApproaches.getQ(query)
+    val (compiled, nonDeterministicColumns, mode) = compileHeuristicHybrid(query, db, queueOfOperations)
+    query = compiled
+    query = db.views.resolve(query)
+    println(query)
+    (
+      query,
+      //TO-DO check if this is right
+      query.columnNames,
+      (nonDeterministicColumns, provenanceCols)
+    )
+  }
 
-  import mimir.Database
-  import mimir.optimizer.operator._
-  import mimir.algebra._
-  import mimir.ctables._
-  import mimir.provenance._
-  import mimir.exec._
-  import mimir.exec.result._
-  import mimir.models.Model
-  import com.typesafe.scalalogging.slf4j.LazyLogging
-  import mimir.parser.MimirJSqlParser
-  import net.sf.jsqlparser.statement.Statement
 
-  import scala.collection.mutable.ArrayBuffer
+  def getWorldBitQuery(db: Database): Operator = {
 
-  /**
-    * TupleBundles ( http://dl.acm.org/citation.cfm?id=1376686 ) are a tactic for
-    * computing over probabilistic data.  Loosely put, the approach is to compile
-    * the query to evaluate simultaneously in N possible worlds.  The results can
-    * then be aggregated to produce an assortment of statistics, etc...
-    *
-    * This class actually wraps three different compilation strategies inspired
-    * by tuple bundles, each handling parallelization in a slightly different way
-    *
-    * * **Long**:  Not technically "TupleBundles".  This approach simply unions
-    * *            together a set of results, one per possible world sampled.
-    * * **Flat**:  Creates a wide result, splitting each non-deterministic column
-    * into a set of columns, one per sample.
-    * * **Array**: Like flat, but uses native array types to avoid overpopulating
-    * the result schema.
-    *
-    * At present, only 'Flat' is fully implemented, although a 'Long'-like approach
-    * can be achieved by using convertFlatToLong.
-    */
-
-  class HeuristicHybridMode(seeds: Seq[Long] = (0l until 10l).toSeq)
-    extends CompileMode[SampleResultIterator]
-      with LazyLogging {
-    var limit = false
-    var listOfJoins = ArrayBuffer[JoinInfo]()
-    type MetadataT =
-      (
-        Set[String], // Nondeterministic column set
-          Seq[String] // Provenance columns
+    if (!db.tableExists("WORLDBits")) {
+      db.backend.update(
+        s"""
+        CREATE TABLE WORLDBits(
+          MIMIR_WORLD_BITS int,
+          PRIMARY KEY (MIMIR_WORLD_BITS)
         )
-
-
-    def rewrite(db: Database, queryRaw: Operator): (Operator, Seq[String], MetadataT) = {
-      var query = queryRaw
-      val (withProvenance, provenanceCols) = Provenance.compile(query)
-      query = withProvenance
-
-      val (compiled, nonDeterministicColumns) = compileHeuristicHybrid(query, db)
-      query = compiled
-      query = db.views.resolve(query)
-      (
-        query,
-        //TO-DO check if this is right
-        query.columnNames,
-        (nonDeterministicColumns, provenanceCols)
+      """)
+      val bits = List(1, 2, 4, 8, 16, 32, 64, 128, 256, 512)
+      db.backend.fastUpdateBatch(
+        s"""
+        INSERT INTO WORLDBits (MIMIR_WORLD_BITS) VALUES (?);
+      """,
+        bits.map { bit =>
+          Seq(IntPrimitive(bit))
+        }
       )
     }
+    var queryString = "select * from WORLDBits"
+    var parser = new MimirJSqlParser(new ByteArrayInputStream(queryString.getBytes));
+    val stmt: Statement = parser.Statement();
+    (db.sql.convert(stmt.asInstanceOf[net.sf.jsqlparser.statement.select.Select]))
+  }
 
+  def wrap(db: Database, results: ResultIterator, query: Operator, meta: MetadataT): SampleResultIterator = {
+    new SampleResultIterator(
+      results,
+      db.typechecker.schemaOf(query),
+      meta._1,
+      seeds.size
+    )
+  }
 
-    def getWorldBitQuery(db: Database): Operator = {
-      if (!db.tableExists("WORLDBits")) {
-        db.backend.update(
-          s"""
-          CREATE TABLE WORLDBits(
-            MIMIR_WORLD_BITS int,
-            PRIMARY KEY (MIMIR_WORLD_BITS)
+  def doesExpressionNeedSplit(expression: Expression, nonDeterministicInputs: Set[String]): Boolean = {
+    val allInputs = ExpressionUtils.getColumns(expression)
+    val expressionHasANonDeterministicInput =
+      allInputs.exists {
+        nonDeterministicInputs(_)
+      }
+    val expressionIsNonDeterministic =
+      !CTables.isDeterministic(expression)
+
+    return expressionHasANonDeterministicInput || expressionIsNonDeterministic
+  }
+
+  def splitExpressionsByWorlds(expressions: Seq[Expression], nonDeterministicInputs: Set[String], models: (String => Model)): Seq[Seq[Expression]] = {
+    val outputColumns =
+      seeds.zipWithIndex.map { case (seed, i) =>
+        val inputInstancesInThisSample =
+          nonDeterministicInputs.
+            map { x => (x -> Var(TupleBundle.colNameInSample(x, i))) }.
+            toMap
+        expressions.map { expression =>
+          CTAnalyzer.compileSample(
+            Eval.inline(expression, inputInstancesInThisSample),
+            IntPrimitive(seed),
+            models
           )
-        """)
-        val bits = List(1, 2, 4, 8, 16, 32, 64, 128, 256, 512)
-        db.backend.fastUpdateBatch(
-          s"""
-          INSERT INTO WORLDBits (MIMIR_WORLD_BITS) VALUES (?);
-        """,
-          bits.map { bit =>
-            Seq(IntPrimitive(bit))
-          }
+        }
+      }
+
+    outputColumns
+  }
+
+  def splitExpressionByWorlds(expression: Expression, nonDeterministicInputs: Set[String], models: (String => Model)): Seq[Expression] = {
+    splitExpressionsByWorlds(Seq(expression), nonDeterministicInputs, models).map(_ (0))
+  }
+
+  def compileHeuristicHybrid(query: Operator, db: Database, queueOfApproaches: Queue[Approaches]): (Operator, Set[String], String) = {
+    // Check for a shortcut opportunity... if the expression is deterministic, we're done!
+    if (CTables.isDeterministic(query)) {
+      var mode = queueOfApproaches.dequeue().mode;
+      if (mode.equals("IL")) {
+        var worldQuery = getWorldBitQuery(db)
+        var joinQuery = Join(query, worldQuery)
+        var projectArgs = joinQuery.columnNames.map { cols =>
+          ProjectArg(cols, Var(cols))
+        }
+        var projQuery = Project(projectArgs, joinQuery)
+
+        return (
+          projQuery,
+          Set[String](), "IL"
         )
       }
-      var queryString = "select * from WORLDBits"
-      var parser = new MimirJSqlParser(new ByteArrayInputStream(queryString.getBytes));
-      val stmt: Statement = parser.Statement();
-      (db.sql.convert(stmt.asInstanceOf[net.sf.jsqlparser.statement.select.Select]))
-    }
+      else {
 
-    def wrap(db: Database, results: ResultIterator, query: Operator, meta: MetadataT): SampleResultIterator = {
-      new SampleResultIterator(
-        results,
-        db.typechecker.schemaOf(query),
-        meta._1,
-        seeds.size
-      )
-    }
-
-    def doesExpressionNeedSplit(expression: Expression, nonDeterministicInputs: Set[String]): Boolean = {
-      val allInputs = ExpressionUtils.getColumns(expression)
-      val expressionHasANonDeterministicInput =
-        allInputs.exists {
-          nonDeterministicInputs(_)
-        }
-      val expressionIsNonDeterministic =
-        !CTables.isDeterministic(expression)
-
-      return expressionHasANonDeterministicInput || expressionIsNonDeterministic
-    }
-
-    def splitExpressionsByWorlds(expressions: Seq[Expression], nonDeterministicInputs: Set[String], models: (String => Model)): Seq[Seq[Expression]] = {
-      val outputColumns =
-        seeds.zipWithIndex.map { case (seed, i) =>
-          val inputInstancesInThisSample =
-            nonDeterministicInputs.
-              map { x => (x -> Var(TupleBundle.colNameInSample(x, i))) }.
-              toMap
-          expressions.map { expression =>
-            CTAnalyzer.compileSample(
-              Eval.inline(expression, inputInstancesInThisSample),
-              IntPrimitive(seed),
-              models
-            )
-          }
-        }
-
-      outputColumns
-    }
-
-    def splitExpressionByWorlds(expression: Expression, nonDeterministicInputs: Set[String], models: (String => Model)): Seq[Expression] = {
-      splitExpressionsByWorlds(Seq(expression), nonDeterministicInputs, models).map(_ (0))
-    }
-
-
-    def PopulateJoin(ex: Expression, query: Operator) : (String,String)={
-      query match {
-        case (Table(_, _, _, _) | EmptyTable(_)) => {
-          var tableName = (query.asInstanceOf[Table]).getTableName
-
-          (tableName,ex.toString())
-        }
-        case Project(columns, oldChild) => {
-           var (nameL,expL) = ("","")
-          //var exp = ""
-
-          columns.map{col=>
-            if(ex.toString.equals(col.getName)){
-              var (name,exp) = PopulateJoin(col.getRHSExpression,oldChild)
-              nameL = name
-              expL = exp
-            }
-
-          }
-
-          (nameL,expL)
-
-        }
-
-        case Select(condition, oldChild) => {
-
-          PopulateJoin(ex,oldChild)
-        }
-        case Join(lhsOldChild, rhsOldChild) => {
-          var found = false
-          var (nameL,expL) = ("","")
-          //var name = ""
-          //var exp = ""
-          var projectArgs = lhsOldChild.columnNames.map{ cols =>
-            ProjectArg(cols,Var(cols))
-          }
-          projectArgs.map{col=>
-
-            if(ex.toString.equals(col.getName)){
-              lhsOldChild match {
-                case Project(columns,oldChildLHS) =>{
-                  found = true
-                 var (name, exp) = PopulateJoin(col.getRHSExpression,oldChildLHS)
-                   nameL=name
-                 expL = exp
-                }
-              }
-
-            }
-          }
-          if(!found){
-            var projectArgs = rhsOldChild.columnNames.map{ cols =>
-              ProjectArg(cols,Var(cols))
-            }
-            projectArgs.map{col=>
-              if(ex.toString.equals(col.getName)){
-                rhsOldChild match {
-                  case Project(columns,oldChildRHS) =>{
-                    var (name, exp)= PopulateJoin(col.getRHSExpression,oldChildRHS)
-                    nameL=name
-                  expL = exp
-                  }
-                }
-
-              }
-            }
-
-          }
-
-          (nameL, expL)
-          }
-        case Union(lhsOldChild, rhsOldChild) => {
-          //var name = ""
-          //var exp = ""
-          var found = false
-          var (nameL,expL) = ("","")
-          var projectArgs = lhsOldChild.columnNames.map{ cols =>
-            ProjectArg(cols,Var(cols))
-          }
-          projectArgs.map{col=>
-            if(ex.toString.equals(col.getName)){
-              lhsOldChild match {
-                case Project(columns,oldChildLHS) =>{
-                  found = true
-                  var (name, exp) = PopulateJoin(col.getRHSExpression,oldChildLHS)
-                  nameL=name
-                expL = exp
-                }
-              }
-
-            }
-          }
-          if(!found){
-            var projectArgs = rhsOldChild.columnNames.map{ cols =>
-              ProjectArg(cols,Var(cols))
-            }
-            projectArgs.map{col=>
-              if(ex.toString.equals(col.getName)){
-                rhsOldChild match {
-                  case Project(columns,oldChildRHS) =>{
-                    found = true
-                    var (name, exp) = PopulateJoin(col.getRHSExpression,oldChildRHS)
-                    nameL=name
-                  expL = exp
-                  }
-                }
-
-              }
-            }
-
-
-          }
-          (nameL, expL)
-
-        }
-
-        case Aggregate(gbColumns, aggColumns, oldChild) => {
-          PopulateJoin(ex,oldChild)
-
-
-        }
-        case View(_, query, _) => {
-          PopulateJoin(ex, query)
-
-
-        }
-
-      }
-    }
-
-    def DetermineJoins(condition: Expression, query: Operator) {
-      condition match {
-        case p: PrimitiveValue => p
-
-        case Arithmetic(op, lhs, rhs) => {
-          DetermineJoins(lhs, query)
-          DetermineJoins(rhs, query)
-        }
-        case Comparison(op, lhs, rhs) => {
-          var isJoin = false
-          lhs match {
-            case Var(_) => isJoin = true
-          }
-          rhs match {
-            case Var(_) =>
-            case (_) => isJoin = false
-          }
-          if (isJoin) {
-
-            val (lhstable,lhsexp)= PopulateJoin(lhs, query)
-            val (rhstable,rhsexp) = PopulateJoin(rhs, query)
-
-            val joininfo = new JoinInfo(lhstable,rhstable,lhsexp,rhsexp)
-            listOfJoins += joininfo
-            return
-          }
-        }
-
-      }
-
-    }
-
-    def IsNonDeterministic(query: Operator,nonDeterministicInput: Set[String]) : Boolean ={
-        query match {
-          case (Table(_, _, _, _) | EmptyTable(_)) => {
-            var tableName = (query.asInstanceOf[Table]).getTableName
-            var schema  = (query.asInstanceOf[Table]).getSchema
-            var alias  = (query.asInstanceOf[Table]).getAlias
-            println(nonDeterministicInput)
-            listOfJoins.map{
-              col =>
-              println(col.getCol1 +" "+col.getTable1)
-              if(col.getTable1.equals(tableName)){
-
-                for(i <- 0 until schema.length ){
-                  if((schema(i)_1).equals(col.getCol1) && nonDeterministicInput.contains(col.getCol1)){
-                    return true
-                  }
-
-                }
-              }else if(col.getTable2.equals(tableName)){
-                for(i <- 0 until schema.length ){
-
-                  if((schema(i)_1).equals(col.getCol2) && nonDeterministicInput.contains(col.getCol2)){
-                    return true
-                  }
-
-                }
-
-              }
-
-            }
-            (false)
-          }
-          case Project(columns, oldChild) => {
-            (IsNonDeterministic(oldChild,nonDeterministicInput))
-          }
-
-          case Select(condition, oldChild) => {
-            (IsNonDeterministic(oldChild,nonDeterministicInput))
-          }
-          case Join(lhsOldChild, rhsOldChild) => {
-
-            lhsOldChild match {
-              case Project(columns,oldChildLHS) =>{
-                if(IsNonDeterministic(oldChildLHS,nonDeterministicInput))
-                  (true)
-              }
-            }
-            rhsOldChild match {
-              case Project(columns,oldChildRHS) =>{
-                (IsNonDeterministic(oldChildRHS,nonDeterministicInput))
-              }
-            }
-
-
-          }
-          case Union(lhsOldChild, rhsOldChild) => {
-            lhsOldChild match {
-              case Project(columns,oldChildLHS) =>{
-                if(IsNonDeterministic(oldChildLHS,nonDeterministicInput))
-                  (true)
-              }
-            }
-            rhsOldChild match {
-              case Project(columns,oldChildRHS) =>{
-                (IsNonDeterministic(oldChildRHS,nonDeterministicInput))
-              }
-            }
-
-          }
-
-          case Aggregate(gbColumns, aggColumns, oldChild) => {
-            (IsNonDeterministic(oldChild,nonDeterministicInput))
-
-          }
-
-        }
-    }
-
-    def compileHeuristicHybrid(query: Operator, db: Database): (Operator, Set[String]) = {
-      // Check for a shortcut opportunity... if the expression is deterministic, we're done!
-      if (CTables.isDeterministic(query)) {
         return (query.addColumn(
           WorldBits.columnName -> IntPrimitive(WorldBits.fullBitVector(seeds.size))
-        ), Set[String]())
-
+        ), Set[String](), "TB")
       }
-      query match {
-        case (Table(_, _, _, _) | EmptyTable(_)) => {
 
-          (
-            query.addColumn(
-              WorldBits.columnName -> IntPrimitive(WorldBits.fullBitVector(seeds.size))
-            ),
-            Set[String]()
-          )
-        }
-        case Project(columns, oldChild) => {
-          val (newChild, nonDeterministicInput) = compileHeuristicHybrid(oldChild, db)
+    }
+    query match {
+      case (Table(_, _, _, _) | EmptyTable(_)) => {
+        (
+          query.addColumn(
+            WorldBits.columnName -> IntPrimitive(WorldBits.fullBitVector(seeds.size))
+          ),
+          Set[String](), "TB"
+        )
+      }
+      case Project(columns, oldChild) => {
+        val (newChild, nonDeterministicInput, mode) = compileHeuristicHybrid(oldChild, db, queueOfApproaches)
 
+        //POP from stack returned by query optimizer and use mode
+
+        var qmode = queueOfApproaches.dequeue().mode;
+        if (mode.equals("IL")) {
+          val (
+            newColumns,
+            nonDeterministicOutputs
+            ): (Seq[ProjectArg], Seq[Set[String]]) = columns.map { col =>
+            if (!CTables.isDeterministic(col.expression)) {
+              var clause1 = (Var(WorldBits.columnName).eq(IntPrimitive(1)), IntPrimitive(seeds(0)))
+              var clause2 = (Var(WorldBits.columnName).eq(IntPrimitive(2)), IntPrimitive(seeds(1)))
+              var clause3 = (Var(WorldBits.columnName).eq(IntPrimitive(4)), IntPrimitive(seeds(2)))
+              var clause4 = (Var(WorldBits.columnName).eq(IntPrimitive(8)), IntPrimitive(seeds(3)))
+              var clause5 = (Var(WorldBits.columnName).eq(IntPrimitive(16)), IntPrimitive(seeds(4)))
+              var clause6 = (Var(WorldBits.columnName).eq(IntPrimitive(32)), IntPrimitive(seeds(5)))
+              var clause7 = (Var(WorldBits.columnName).eq(IntPrimitive(64)), IntPrimitive(seeds(6)))
+              var clause8 = (Var(WorldBits.columnName).eq(IntPrimitive(128)), IntPrimitive(seeds(7)))
+              var clause9 = (Var(WorldBits.columnName).eq(IntPrimitive(256)), IntPrimitive(seeds(8)))
+              var listExp: List[(Expression, Expression)] = List(clause1, clause2, clause3, clause4, clause5, clause6, clause7, clause8, clause9)
+              var nullMap: Map[String, Expression] = Map()
+              (ProjectArg(col.name,
+                CTAnalyzer.compileSample(
+                  Eval.inline(col.expression, nullMap),
+                  ExpressionUtils.makeCaseExpression(listExp, IntPrimitive(seeds(9))),
+                  db.models.get(_)
+                )),
+                Set(col.name)
+              )
+            } else {
+              (col, Set[String]())
+            }
+          }.unzip
+
+          val replacementProjection =
+            Project(
+              newColumns ++ Seq(ProjectArg(WorldBits.columnName, Var(WorldBits.columnName))),
+              newChild
+            )
+          (replacementProjection, nonDeterministicOutputs.flatten.toSet, mode)
+
+        } else {
           val (
             newColumns,
             nonDeterministicOutputs
@@ -420,353 +240,263 @@
               newChild
             )
 
-          (replacementProjection, nonDeterministicOutputs.flatten.toSet)
+
+          (replacementProjection, nonDeterministicOutputs.flatten.toSet, mode)
+
         }
 
-        case Select(condition, oldChild) => {
-          DetermineJoins(condition, query)
-          val (newChild, nonDeterministicInput) = compileHeuristicHybrid(oldChild, db)
 
-          if (doesExpressionNeedSplit(condition, nonDeterministicInput)) {
-            val replacements = splitExpressionByWorlds(condition, nonDeterministicInput, db.models.get(_))
+      }
 
-            val updatedWorldBits =
-              Arithmetic(Arith.BitAnd,
-                Var(WorldBits.columnName),
-                replacements.zipWithIndex.map { case (expr, i) =>
-                  Conditional(expr, IntPrimitive(1 << i), IntPrimitive(0))
-                }.fold(IntPrimitive(0))(Arithmetic(Arith.BitOr, _, _))
-              )
+      case Select(condition, oldChild) => {
 
-            logger.debug(s"Updated World Bits: \n${updatedWorldBits}")
-            val newChildWithUpdatedWorldBits =
-              OperatorUtils.replaceColumn(
-                WorldBits.columnName,
-                updatedWorldBits,
-                newChild
-              )
-            (
-              Select(
-                Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
-                newChildWithUpdatedWorldBits
+        val (newChild, nonDeterministicInput, mode) = compileHeuristicHybrid(oldChild, db, queueOfApproaches)
+
+        var qmode = queueOfApproaches.dequeue().mode;
+        if (mode.equals("IL")) {
+
+          (Select(condition, newChild), nonDeterministicInput, mode)
+
+        } else {
+
+          /*
+                    if (doesExpressionNeedSplit(condition, nonDeterministicInput)) {
+                      val replacements = splitExpressionByWorlds(condition, nonDeterministicInput, db.models.get(_))
+
+                      val updatedWorldBits =
+                        Arithmetic(Arith.BitAnd,
+                          Var(WorldBits.columnName),
+                          replacements.zipWithIndex.map { case (expr, i) =>
+                            Conditional(expr, IntPrimitive(1 << i), IntPrimitive(0))
+                          }.fold(IntPrimitive(0))(Arithmetic(Arith.BitOr, _, _))
+                        )
+
+                      //logger.debug(s"Updated World Bits: \n${updatedWorldBits}")
+                      val newChildWithUpdatedWorldBits =
+                        OperatorUtils.replaceColumn(
+                          WorldBits.columnName,
+                          updatedWorldBits,
+                          newChild
+                        )
+                      (
+                        Select(
+                          Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
+                          newChildWithUpdatedWorldBits
+                        ),
+                        nonDeterministicInput, "TB"
+                      )
+                    } else {
+                      (Select(condition, newChild), nonDeterministicInput, "TB")
+                    }
+          */
+          //Need to check Tb to IL conversion
+
+          var worldQuery = getWorldBitQuery(db)
+          val rewrittenJoin =
+            OperatorUtils.joinMergingColumns(
+              Seq((WorldBits.columnName,
+                (lhs: Expression, rhs: Expression) => Arithmetic(Arith.BitAnd, lhs, rhs))
               ),
-              nonDeterministicInput
+              newChild, worldQuery
             )
-          } else {
-            (Select(condition, newChild), nonDeterministicInput)
+
+          val completedJoin =
+            Select(
+              Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
+              rewrittenJoin
+            )
+
+          var projectArgs = completedJoin.columnNames.map { cols =>
+            ProjectArg(cols, Var(cols))
           }
+
+//          projectArgs.map {
+//            col =>
+//              if (col.getName.contains("MIMIR_SAMPLE_"))
+//                println(ChooseApproaches.CheckExpression(col.getRHSExpression, completedJoin))
+//          }
+
+
+          var donelist: mutable.HashSet[String] = new mutable.HashSet()
+          var nProjections:ArrayBuffer[ProjectArg] = new ArrayBuffer[ProjectArg]
+          projectArgs.map {
+            col =>
+
+
+                if (col.getName.startsWith("MIMIR_SAMPLE_")) {
+                  var name = col.getName.substring(15)
+                  if (!donelist.contains(name)) {
+                    donelist+=name
+                    var clause1 = (Var(WorldBits.columnName).eq(IntPrimitive(1)), Var(TupleBundle.colNameInSample(name, 0)))
+                    var clause2 = (Var(WorldBits.columnName).eq(IntPrimitive(2)), Var(TupleBundle.colNameInSample(name, 1)))
+                    var clause3 = (Var(WorldBits.columnName).eq(IntPrimitive(4)), Var(TupleBundle.colNameInSample(name, 2)))
+                    var clause4 = (Var(WorldBits.columnName).eq(IntPrimitive(8)), Var(TupleBundle.colNameInSample(name, 3)))
+                    var clause5 = (Var(WorldBits.columnName).eq(IntPrimitive(16)), Var(TupleBundle.colNameInSample(name, 4)))
+                    var clause6 = (Var(WorldBits.columnName).eq(IntPrimitive(32)), Var(TupleBundle.colNameInSample(name, 5)))
+                    var clause7 = (Var(WorldBits.columnName).eq(IntPrimitive(64)), Var(TupleBundle.colNameInSample(name, 6)))
+                    var clause8 = (Var(WorldBits.columnName).eq(IntPrimitive(128)), Var(TupleBundle.colNameInSample(name, 7)))
+                    var clause9 = (Var(WorldBits.columnName).eq(IntPrimitive(256)), Var(TupleBundle.colNameInSample(name, 8)))
+                    var listExp: List[(Expression, Expression)] = List(clause1, clause2, clause3, clause4, clause5, clause6, clause7, clause8, clause9)
+                    var nullMap: Map[String, Expression] = Map()
+                    var nExp = ExpressionUtils.makeCaseExpression(listExp, Var(TupleBundle.colNameInSample(name, 9)))
+                    nProjections+=ProjectArg(col.getName.substring(15), nExp)
+
+                  }
+
+                } else {
+                  var nexp =(col.getName)
+//                  nProjections+=ProjectArg(col.getName, Var(nexp.toString))
+
+                }
+          }
+
+
+          var shardedChild = Project(projectArgs++nProjections, completedJoin)
+          //println(shardedChild)
+          (Select(condition, shardedChild), nonDeterministicInput, "IL")
+
+          //        }
         }
 
-        case Join(lhsOldChild, rhsOldChild) => {
-          var (lhsNewChild, lhsNonDeterministicInput) = compileHeuristicHybrid(lhsOldChild, db)
-          var (rhsNewChild, rhsNonDeterministicInput) = compileHeuristicHybrid(rhsOldChild, db)
+      }
 
-          // To safely join the two together, we need to rename the world-bit columns
-          if (IsNonDeterministic(lhsNewChild,lhsNonDeterministicInput)|| IsNonDeterministic(rhsNewChild,rhsNonDeterministicInput)) {
-            if (IsNonDeterministic(lhsNewChild,lhsNonDeterministicInput)) {
-              var worldQuery = getWorldBitQuery(db)
+      case Join(lhsOldChild, rhsOldChild) => {
+        var (lhsNewChild, lhsNonDeterministicInput, lmode) = compileHeuristicHybrid(lhsOldChild, db, queueOfApproaches)
+        var (rhsNewChild, rhsNonDeterministicInput, rmode) = compileHeuristicHybrid(rhsOldChild, db, queueOfApproaches)
+        //POP from stack returned by query optimizer and use mode
+        var mode = queueOfApproaches.dequeue().mode;
+        // To safely join the two together, we need to rename the world-bit columns
 
-              var lpArgs = worldQuery.columnNames.map(col =>
-                ProjectArg(WorldILBits.columnName, Var(col)))
+        val rewrittenJoin =
+          OperatorUtils.joinMergingColumns(
+            Seq((WorldBits.columnName,
+              (lhs: Expression, rhs: Expression) => Arithmetic(Arith.BitAnd, lhs, rhs))
+            ),
+            lhsNewChild, rhsNewChild
+          )
 
-              var lnewQuery = Project(lpArgs, worldQuery)
+        // Finally, add a selection to filter out values that can be filtered out in all worlds.
+        val completedJoin =
+          Select(
+            Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
+            rewrittenJoin
+          )
 
-              var joinQuery = Join(lnewQuery, lhsNewChild)
-              var lnpArgs = joinQuery.columnNames.map { cols =>
+        if (mode.equals("IL"))
+          (completedJoin, lhsNonDeterministicInput ++ rhsNonDeterministicInput, "IL")
+        else
+          (completedJoin, lhsNonDeterministicInput ++ rhsNonDeterministicInput, "TB")
+      }
 
-                  ProjectArg(cols, Var(cols))
+      case Union(lhsOldChild, rhsOldChild) => {
+        val (lhsNewChild, lhsNonDeterministicInput, lmode) = compileHeuristicHybrid(lhsOldChild, db, queueOfApproaches)
+        val (rhsNewChild, rhsNonDeterministicInput, rmode) = compileHeuristicHybrid(rhsOldChild, db, queueOfApproaches)
+        var qmode = queueOfApproaches.dequeue().mode;
 
+        val schema = query.columnNames
 
+        val alignNonDeterminism = (
+                                    query: Operator,
+                                    nonDeterministicInput: Set[String],
+                                    nonDeterministicOutput: Set[String]
+                                  ) => {
+          Project(
+            schema.flatMap { col =>
+              if (nonDeterministicOutput(col)) {
+                if (nonDeterministicInput(col)) {
+                  WorldBits.sampleCols(col, seeds.size).map { sampleCol => ProjectArg(sampleCol, Var(sampleCol)) }
+                } else {
+                  WorldBits.sampleCols(col, seeds.size).map { sampleCol => ProjectArg(sampleCol, Var(col)) }
+                }
+              } else {
+                if (nonDeterministicInput(col)) {
+                  throw new RAException("ERROR: Non-deterministic inputs must produce non-deterministic outputs")
+                } else {
+                  Seq(ProjectArg(col, Var(col)))
+                }
               }
-              lnpArgs = lnpArgs.filter(_.getName != WorldBits.columnName)
+            },
+            query
+          )
+        }
 
+        val nonDeterministicOutput =
+          lhsNonDeterministicInput ++ rhsNonDeterministicInput
+        (
+          Union(
+            alignNonDeterminism(lhsNewChild, lhsNonDeterministicInput, nonDeterministicOutput),
+            alignNonDeterminism(rhsNewChild, rhsNonDeterministicInput, nonDeterministicOutput)
+          ),
+          nonDeterministicOutput, "TB"
+        )
+      }
 
-              lhsNewChild = Project(lnpArgs, joinQuery)
-            }
-            else {
-              lhsNewChild = lhsNewChild.addColumn(
-                WorldILBits.columnName -> IntPrimitive(WorldILBits.fullBitVector(seeds.size))
-              )
-              var lnpArgs = lhsNewChild.columnNames.map { cols =>
-
-                ProjectArg(cols, Var(cols))
-
-
-              }
-              lnpArgs = lnpArgs.filter(_.getName != WorldBits.columnName)
-
-
-              lhsNewChild = Project(lnpArgs, lhsNewChild)
-
-
-            }
-            if (IsNonDeterministic(rhsNewChild,rhsNonDeterministicInput)) {
-              var worldQuery = getWorldBitQuery(db)
-
-              var rpArgs = worldQuery.columnNames.map(col =>
-                ProjectArg(WorldILBits.columnName, Var(col)))
-
-              var rnewQuery = Project(rpArgs, worldQuery)
-
-              var joinQuery = Join(rnewQuery, rhsNewChild)
-              var rnpArgs = joinQuery.columnNames.map { cols =>
-                ProjectArg(cols, Var(cols))
-              }
-              rnpArgs = rnpArgs.filter(_.getName != WorldBits.columnName)
-
-              rhsNewChild = Project(rnpArgs, joinQuery)
-            }
-            else {
-              rhsNewChild = rhsNewChild.addColumn(
-                WorldILBits.columnName -> IntPrimitive(WorldILBits.fullBitVector(seeds.size))
-              )
-              var lnpArgs = rhsNewChild.columnNames.map { cols =>
-
-                ProjectArg(cols, Var(cols))
-
-
-              }
-              lnpArgs = lnpArgs.filter(_.getName != WorldBits.columnName)
-
-
-              rhsNewChild = Project(lnpArgs, rhsNewChild)
-            }
-
-            val rewrittenJoin =
-              OperatorUtils.joinMergingColumns(
-                Seq((WorldILBits.columnName,
-                  (lhs: Expression, rhs: Expression) => Arithmetic(Arith.BitAnd, lhs, rhs))
-                ),
-                lhsNewChild, rhsNewChild
-              )
-
-            var completedJoin =
-              Select(
-                Comparison(Cmp.Neq, Var(WorldILBits.columnName), IntPrimitive(0)),
-                rewrittenJoin
-              )
-            // completedJoin = completedJoin.columnNames.map{
-            //     cols = >{
-            //       println(cols)
-            //       if(cols.equals(WorldILBits.columnName)){
-            //         ProjectArg(WorldBits.columnName,Var(cols))
-            //       }else{
-            //         ProjectArg(cols,Var(cols))
-            //       }
-            //
-            //     }
-            //
-            //   }
-
-            (completedJoin, lhsNonDeterministicInput ++ rhsNonDeterministicInput)
-          }
-          else {
-            // To safely join the two together, we need to rename the world-bit columns
+      case Aggregate(gbColumns, aggColumns, oldChild) => {
+        val (newChild, nonDeterministicInput, mode) = compileHeuristicHybrid(oldChild, db, queueOfApproaches)
+        var qmode = queueOfApproaches.dequeue().mode;
+        if (mode.equals("TB")) {
+          val oneOfTheGroupByColumnsIsNonDeterministic =
+            gbColumns.map(_.name).exists(nonDeterministicInput(_))
+          if (oneOfTheGroupByColumnsIsNonDeterministic) {
+            //            flag=1;
+            var worldQuery = getWorldBitQuery(db)
             val rewrittenJoin =
               OperatorUtils.joinMergingColumns(
                 Seq((WorldBits.columnName,
                   (lhs: Expression, rhs: Expression) => Arithmetic(Arith.BitAnd, lhs, rhs))
                 ),
-                lhsNewChild, rhsNewChild
+                newChild, worldQuery
               )
 
-            // Finally, add a selection to filter out values that can be filtered out in all worlds.
             val completedJoin =
               Select(
                 Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
                 rewrittenJoin
               )
 
-            (completedJoin, lhsNonDeterministicInput ++ rhsNonDeterministicInput)
-          }
-        }
-
-        case Union(lhsOldChild, rhsOldChild) => {
-          val (lhsNewChild, lhsNonDeterministicInput) = compileHeuristicHybrid(lhsOldChild, db)
-          val (rhsNewChild, rhsNonDeterministicInput) = compileHeuristicHybrid(rhsOldChild, db)
-
-          val nonDeterministicOutput =
-            lhsNonDeterministicInput ++ rhsNonDeterministicInput
-          (
-            Union(
-              lhsNewChild,
-              rhsNewChild
-            ),
-            nonDeterministicOutput
-          )
-        }
-
-        case Aggregate(gbColumns, aggColumns, oldChild) => {
-          val (newChild, nonDeterministicInput) = compileHeuristicHybrid(oldChild, db)
-         if(false){
-            val oneOfTheGroupByColumnsIsNonDeterministic =
-              gbColumns.map(_.name).exists(nonDeterministicInput(_))
-
-            if(oneOfTheGroupByColumnsIsNonDeterministic){
-              //          logger.trace(s"Processing non-deterministic aggregate: \n$query")
-
-              // This is the hard case: One of the group-by columns is non-deterministic
-              // We need to resort to evaluating the query with the 'Long' evaluation strategy.
-              // If we created our own evaluation engine, we could get around this limitation, but
-              // as long as we need to run on a normal backend, this is required.
-              //          val shardedChild = convertFlatToLong(newChild, oldChild.columnNames, nonDeterministicInput)
-
-
-
-
-              var worldQuery = getWorldBitQuery(db)
-              val rewrittenJoin =
-                OperatorUtils.joinMergingColumns(
-                  Seq( (WorldBits.columnName,
-                    (lhs:Expression, rhs:Expression) => Arithmetic(Arith.BitAnd, lhs, rhs))
-                  ),
-                  newChild, worldQuery
-                )
-
-              val completedJoin =
-                Select(
-                  Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
-                  rewrittenJoin
-                )
-
-              var projectArgs = completedJoin.columnNames.map{ cols =>
-                ProjectArg(cols,Var(cols))
-              }
-
-
-              var groupcol = gbColumns.map{
-
-                col =>
-                  var nexp =
-                    if(nonDeterministicInput.contains(col.name)){
-                      var clause1 = (Var(WorldBits.columnName).eq(IntPrimitive(1)),Var(TupleBundle.colNameInSample(col.toString, 0)))
-                      var clause2 = (Var(WorldBits.columnName).eq(IntPrimitive(2)),Var(TupleBundle.colNameInSample(col.toString, 1)))
-                      var clause3 = (Var(WorldBits.columnName).eq(IntPrimitive(4)),Var(TupleBundle.colNameInSample(col.toString, 2)))
-                      var clause4 = (Var(WorldBits.columnName).eq(IntPrimitive(8)),Var(TupleBundle.colNameInSample(col.toString, 3)))
-                      var clause5 = (Var(WorldBits.columnName).eq(IntPrimitive(16)),Var(TupleBundle.colNameInSample(col.toString, 4)))
-                      var clause6 = (Var(WorldBits.columnName).eq(IntPrimitive(32)),Var(TupleBundle.colNameInSample(col.toString, 5)))
-                      var clause7 = (Var(WorldBits.columnName).eq(IntPrimitive(64)),Var(TupleBundle.colNameInSample(col.toString, 6)))
-                      var clause8 = (Var(WorldBits.columnName).eq(IntPrimitive(128)),Var(TupleBundle.colNameInSample(col.toString, 7)))
-                      var clause9 = (Var(WorldBits.columnName).eq(IntPrimitive(256)),Var(TupleBundle.colNameInSample(col.toString, 8)))
-                      var listExp:List[(Expression,Expression)] = List(clause1,clause2,clause3,clause4,clause5,clause6,clause7,clause8,clause9)
-                      var nullMap:Map[String,Expression] = Map()
-                      (ExpressionUtils.makeCaseExpression(listExp,Var(TupleBundle.colNameInSample(col.toString, 9))))
-                    } else {
-                      (col)
-                    }
-                  ProjectArg(col.toString(),nexp)
-              }
-
-              var shardedChild = Project(projectArgs++groupcol,completedJoin)
-
-              // Split the aggregate columns.  Because a group-by attribute is uncertain, all
-              // sources of uncertainty can be, potentially, non-deterministic.
-              // As a result, we convert expressions to aggregates over case statements:
-              // i.e., SUM(A) AS A becomes
-              // SUM(CASE WHEN inputIsInWorld(1) THEN A ELSE NULL END) AS A_1,
-              // SUM(CASE WHEN inputIsInWorld(2) THEN A ELSE NULL END) AS A_2,
-              // ...
-              val (splitAggregates, nonDeterministicOutputs) =
-              aggColumns.map { case AggFunction(name, distinct, args, alias) =>
-                val splitAggregates =
-                  (0 until seeds.size).map { i =>
-                    AggFunction(name, distinct,
-                      args.map { arg =>
-                        Conditional(
-                          Comparison(Cmp.Eq,
-                            Arithmetic(Arith.BitAnd,
-                              Var(WorldBits.columnName),
-                              IntPrimitive(1 << i)
-                            ),
-                            IntPrimitive(1 << i)
-                          ),
-                          arg,
-                          NullPrimitive()
-                        )
-                      },
-                      TupleBundle.colNameInSample(alias, i)
-                    )
-                  }
-                (splitAggregates, Set(alias))
-              }.unzip
-
-              // We also need to figure out which worlds each group will be present in.
-              // We take an OR of all of the worlds that lead to the aggregate being present.
-              val worldBitsAgg =
-              AggFunction("GROUP_BITWISE_OR", false, Seq(Var(WorldBits.columnName)), WorldBits.columnName)
-
-              (
-                Aggregate(gbColumns, splitAggregates.flatten ++ Seq(worldBitsAgg), shardedChild),
-                nonDeterministicOutputs.flatten.toSet
-              )
-
-            } else {
-
-              // This is the easy case: All of the group-by columns are non-deterministic
-              // and we can safely use classical aggregation to compute this expression.
-
-              // As before we may need to split aggregate columns, but here we can first
-              // check to see if the aggregate expression depends on non-deterministic
-              // values.  If it does not, then we can avoid splitting it.
-              val (splitAggregates, nonDeterministicOutputs) =
-              aggColumns.map { case AggFunction(name, distinct, args, alias) =>
-                if(args.exists(doesExpressionNeedSplit(_, nonDeterministicInput))){
-                  val splitAggregates =
-                    splitExpressionsByWorlds(args, nonDeterministicInput, db.models.get(_)).
-                      zipWithIndex.
-                      map { case (newArgs, i) => AggFunction(name, distinct, newArgs, TupleBundle.colNameInSample(alias, i)) }
-                  (splitAggregates, Set(alias))
-                } else {
-                  (Seq(AggFunction(name, distinct, args, alias)), Set[String]())
-                }
-              }.unzip
-
-              // Same deal as before: figure out which worlds the group will be present in.
-
-              val worldBitsAgg =
-                AggFunction("GROUP_BITWISE_OR", false, Seq(Var(WorldBits.columnName)), WorldBits.columnName)
-
-              (
-                Aggregate(gbColumns, splitAggregates.flatten ++ Seq(worldBitsAgg), newChild),
-                nonDeterministicOutputs.flatten.toSet
-              )
-
-            }
-      }else{
-          val oneOfTheGroupByColumnsIsNonDeterministic =
-            gbColumns.map(_.name).exists(nonDeterministicInput(_))
-
-          if(oneOfTheGroupByColumnsIsNonDeterministic){
-
-            var projectArgs = newChild.columnNames.map{ cols =>
-              ProjectArg(cols,Var(cols))
+            var projectArgs = completedJoin.columnNames.map { cols =>
+              ProjectArg(cols, Var(cols))
             }
 
 
-            var groupcol = gbColumns.map{
-
+            var donelist: mutable.HashSet[String] = new mutable.HashSet()
+            var nProjections:ArrayBuffer[ProjectArg] = new ArrayBuffer[ProjectArg]
+            projectArgs.map {
               col =>
-                var nexp =
-                  if(nonDeterministicInput.contains(col.name)){
-                    var clause1 = (Var(WorldBits.columnName).eq(IntPrimitive(1)),Var(TupleBundle.colNameInSample(col.toString, 0)))
-                    var clause2 = (Var(WorldBits.columnName).eq(IntPrimitive(2)),Var(TupleBundle.colNameInSample(col.toString, 1)))
-                    var clause3 = (Var(WorldBits.columnName).eq(IntPrimitive(4)),Var(TupleBundle.colNameInSample(col.toString, 2)))
-                    var clause4 = (Var(WorldBits.columnName).eq(IntPrimitive(8)),Var(TupleBundle.colNameInSample(col.toString, 3)))
-                    var clause5 = (Var(WorldBits.columnName).eq(IntPrimitive(16)),Var(TupleBundle.colNameInSample(col.toString, 4)))
-                    var clause6 = (Var(WorldBits.columnName).eq(IntPrimitive(32)),Var(TupleBundle.colNameInSample(col.toString, 5)))
-                    var clause7 = (Var(WorldBits.columnName).eq(IntPrimitive(64)),Var(TupleBundle.colNameInSample(col.toString, 6)))
-                    var clause8 = (Var(WorldBits.columnName).eq(IntPrimitive(128)),Var(TupleBundle.colNameInSample(col.toString, 7)))
-                    var clause9 = (Var(WorldBits.columnName).eq(IntPrimitive(256)),Var(TupleBundle.colNameInSample(col.toString, 8)))
-                    var listExp:List[(Expression,Expression)] = List(clause1,clause2,clause3,clause4,clause5,clause6,clause7,clause8,clause9)
-                    var nullMap:Map[String,Expression] = Map()
-                    (ExpressionUtils.makeCaseExpression(listExp,Var(TupleBundle.colNameInSample(col.toString, 9))))
-                  } else {
-                    (col)
+
+
+                if (col.getName.startsWith("MIMIR_SAMPLE_")) {
+                  var name = col.getName.substring(15)
+                  if (!donelist.contains(name)) {
+                    donelist+=name
+                    var clause1 = (Var(WorldBits.columnName).eq(IntPrimitive(1)), Var(TupleBundle.colNameInSample(name, 0)))
+                    var clause2 = (Var(WorldBits.columnName).eq(IntPrimitive(2)), Var(TupleBundle.colNameInSample(name, 1)))
+                    var clause3 = (Var(WorldBits.columnName).eq(IntPrimitive(4)), Var(TupleBundle.colNameInSample(name, 2)))
+                    var clause4 = (Var(WorldBits.columnName).eq(IntPrimitive(8)), Var(TupleBundle.colNameInSample(name, 3)))
+                    var clause5 = (Var(WorldBits.columnName).eq(IntPrimitive(16)), Var(TupleBundle.colNameInSample(name, 4)))
+                    var clause6 = (Var(WorldBits.columnName).eq(IntPrimitive(32)), Var(TupleBundle.colNameInSample(name, 5)))
+                    var clause7 = (Var(WorldBits.columnName).eq(IntPrimitive(64)), Var(TupleBundle.colNameInSample(name, 6)))
+                    var clause8 = (Var(WorldBits.columnName).eq(IntPrimitive(128)), Var(TupleBundle.colNameInSample(name, 7)))
+                    var clause9 = (Var(WorldBits.columnName).eq(IntPrimitive(256)), Var(TupleBundle.colNameInSample(name, 8)))
+                    var listExp: List[(Expression, Expression)] = List(clause1, clause2, clause3, clause4, clause5, clause6, clause7, clause8, clause9)
+                    var nullMap: Map[String, Expression] = Map()
+                    var nexp = ExpressionUtils.makeCaseExpression(listExp, Var(TupleBundle.colNameInSample(name, 9)))
+                    nProjections+=ProjectArg(col.getName.substring(15), nexp)
+
                   }
-                ProjectArg(col.toString(),nexp)
+
+                } else {
+                  var nexp =(col.getName)
+//                  nProjections+=ProjectArg(col.getName, Var(nexp.toString))
+
+                }
             }
 
-            var shardedChild = Project(projectArgs++groupcol,newChild)
+
+//            var shardedChild = Project(nProjections, completedJoin)
+
+            var shardedChild = Project(projectArgs ++ nProjections, completedJoin)
+
 
             // Split the aggregate columns.  Because a group-by attribute is uncertain, all
             // sources of uncertainty can be, potentially, non-deterministic.
@@ -806,104 +536,132 @@
 
             (
               Aggregate(gbColumns, splitAggregates.flatten ++ Seq(worldBitsAgg), shardedChild),
-              nonDeterministicOutputs.flatten.toSet
+              nonDeterministicOutputs.flatten.toSet, "IL"
             )
 
-
-          }else{
-            var gcols: Seq[mimir.algebra.Var] = Nil
-            var pl = newChild.columnNames.zipWithIndex.map{ case (cols,i) =>
-              if(!(cols.equals(WorldBits.columnName)) && !(cols.contains(Provenance.rowidColnameBase))){
-                AggFunction("FIRST",false,Seq(Var(cols)),"MIMIR_AGG_FIRST_"+(i+1))
-              }else{
-                AggFunction("SUM",false,Seq(Var(cols)),"MIMIR_AGG_FIRST_"+(i+1))
-              }
-            }
-            var agglist = pl.filter(_.getFunctionName.contains("FIRST"))
+          } else {
 
 
-            var c = 0
+            // This is the easy case: All of the group-by columns are non-deterministic
+            // and we can safely use classical aggregation to compute this expression.
 
-            newChild.columnNames.map{cols =>
-              if(cols.contains(Provenance.rowidColnameBase)){
-                c+=1;
-              }
-            }
-
-            if(c==1){
-              gcols = Seq(Var(Provenance.rowidColnameBase+"_"+0))
-            }else{
-              gcols = Seq(Var(Provenance.rowidColnameBase+"_"+0),Var(Provenance.rowidColnameBase+"_"+1))
-            }
-
-
-
-
-
-            //println(AggFunction("FIRST",false,list,""))
-
-            val (ssplitAggregates, snonDeterministicOutputs) =
-            agglist.map { case AggFunction(name, distinct, args, alias) =>
+            // As before we may need to split aggregate columns, but here we can first
+            // check to see if the aggregate expression depends on non-deterministic
+            // values.  If it does not, then we can avoid splitting it.
+            val (splitAggregates, nonDeterministicOutputs) =
+            aggColumns.map { case AggFunction(name, distinct, args, alias) =>
+              if (args.exists(doesExpressionNeedSplit(_, nonDeterministicInput))) {
+                val splitAggregates =
+                  splitExpressionsByWorlds(args, nonDeterministicInput, db.models.get(_)).
+                    zipWithIndex.
+                    map { case (newArgs, i) => AggFunction(name, distinct, newArgs, TupleBundle.colNameInSample(alias, i)) }
+                (splitAggregates, Set(alias))
+              } else {
                 (Seq(AggFunction(name, distinct, args, alias)), Set[String]())
+              }
             }.unzip
-
 
             // Same deal as before: figure out which worlds the group will be present in.
 
-            val worldBitsAggs =
+            val worldBitsAgg =
               AggFunction("GROUP_BITWISE_OR", false, Seq(Var(WorldBits.columnName)), WorldBits.columnName)
 
-
-            var queryagg = Aggregate(gcols, ssplitAggregates.flatten ++ Seq(worldBitsAggs), newChild))
-
-
-              val (splitAggregates, nonDeterministicOutputs) =
-              aggColumns.map { case AggFunction(name, distinct, args, alias) =>
-                if(args.exists(doesExpressionNeedSplit(_, nonDeterministicInput))){
-                  val splitAggregates =
-                    splitExpressionsByWorlds(args, nonDeterministicInput, db.models.get(_)).
-                      zipWithIndex.
-                      map { case (newArgs, i) => AggFunction(name, distinct, newArgs, TupleBundle.colNameInSample(alias, i)) }
-                  (splitAggregates, Set(alias))
-                } else {
-                  (Seq(AggFunction(name, distinct, args, alias)), Set[String]())
-                }
-              }.unzip
-
-              // Same deal as before: figure out which worlds the group will be present in.
-
-              val worldBitsAgg =
-                AggFunction("GROUP_BITWISE_OR", false, Seq(Var(WorldBits.columnName)), WorldBits.columnName)
-
-              (
-                Aggregate(gbColumns, splitAggregates.flatten ++ Seq(worldBitsAgg), newChild),
-                nonDeterministicOutputs.flatten.toSet
-              )
-
-
+            (
+              Aggregate(gbColumns, splitAggregates.flatten ++ Seq(worldBitsAgg), newChild),
+              nonDeterministicOutputs.flatten.toSet, "TB"
+            )
 
           }
 
+
+        } else {
+          (
+            Aggregate(gbColumns ++ Seq(Var(WorldBits.columnName)), aggColumns,
+              newChild), nonDeterministicInput, "IL"
+          )
         }
+        //        }
+      }
 
+      // We don't handle materialized tuple bundles (at the moment)
+      // so give up and drop the view.
+      case View(_, query, _) => {
+        compileHeuristicHybrid(query, db, queueOfApproaches)
+      }
 
+      case Sort(sortCols, oldChild) => {
+        val (newChild, nonDeterministicInput, mode) = compileHeuristicHybrid(oldChild, db, queueOfApproaches)
+        var qmode = queueOfApproaches.dequeue().mode;
+        if (mode.equals("TB")) {
+          val oneOfTheOrderByColumnsIsNonDeterministic =
+            sortCols.map(_.expression.toString()).exists(nonDeterministicInput(_))
 
-        }
-
-        // We don't handle materialized tuple bundles (at the moment)
-        // so give up and drop the view.
-        case View(_, query, _) => compileHeuristicHybrid(query, db)
-
-        case Sort(sortCols, oldChild) => {
-          val (newChild, nonDeterministicInput) = compileHeuristicHybrid(oldChild, db)
-          if (limit) {
+          if (!oneOfTheOrderByColumnsIsNonDeterministic) {
             (
-              Sort(sortCols, newChild), nonDeterministicInput
+              Sort(sortCols, newChild), nonDeterministicInput, "TB"
             )
           }
 
           else {
 
+            var worldQuery = getWorldBitQuery(db)
+            val rewrittenJoin =
+              OperatorUtils.joinMergingColumns(
+                Seq((WorldBits.columnName,
+                  (lhs: Expression, rhs: Expression) => Arithmetic(Arith.BitAnd, lhs, rhs))
+                ),
+                newChild, worldQuery
+              )
+
+            val completedJoin =
+              Select(
+                Comparison(Cmp.Neq, Var(WorldBits.columnName), IntPrimitive(0)),
+                rewrittenJoin
+              )
+
+            var projectArgs = completedJoin.columnNames.map { cols =>
+              ProjectArg(cols, Var(cols))
+            }
+
+
+
+            var donelist: mutable.HashSet[String] = new mutable.HashSet()
+            var nProjections:ArrayBuffer[ProjectArg] = new ArrayBuffer[ProjectArg]
+            projectArgs.map {
+              col =>
+
+
+                if (col.getName.startsWith("MIMIR_SAMPLE_")) {
+                  var name = col.getName.substring(15)
+                  if (!donelist.contains(name)) {
+                    donelist+=name
+                    var clause1 = (Var(WorldBits.columnName).eq(IntPrimitive(1)), Var(TupleBundle.colNameInSample(name, 0)))
+                    var clause2 = (Var(WorldBits.columnName).eq(IntPrimitive(2)), Var(TupleBundle.colNameInSample(name, 1)))
+                    var clause3 = (Var(WorldBits.columnName).eq(IntPrimitive(4)), Var(TupleBundle.colNameInSample(name, 2)))
+                    var clause4 = (Var(WorldBits.columnName).eq(IntPrimitive(8)), Var(TupleBundle.colNameInSample(name, 3)))
+                    var clause5 = (Var(WorldBits.columnName).eq(IntPrimitive(16)), Var(TupleBundle.colNameInSample(name, 4)))
+                    var clause6 = (Var(WorldBits.columnName).eq(IntPrimitive(32)), Var(TupleBundle.colNameInSample(name, 5)))
+                    var clause7 = (Var(WorldBits.columnName).eq(IntPrimitive(64)), Var(TupleBundle.colNameInSample(name, 6)))
+                    var clause8 = (Var(WorldBits.columnName).eq(IntPrimitive(128)), Var(TupleBundle.colNameInSample(name, 7)))
+                    var clause9 = (Var(WorldBits.columnName).eq(IntPrimitive(256)), Var(TupleBundle.colNameInSample(name, 8)))
+                    var listExp: List[(Expression, Expression)] = List(clause1, clause2, clause3, clause4, clause5, clause6, clause7, clause8, clause9)
+                    var nullMap: Map[String, Expression] = Map()
+                    var nexp = ExpressionUtils.makeCaseExpression(listExp, Var(TupleBundle.colNameInSample(name, 9)))
+                    nProjections+=ProjectArg(col.getName.substring(15), nexp)
+
+                  }
+
+                } else {
+                  var nexp =(col.getName)
+                  //                  nProjections+=ProjectArg(col.getName, Var(nexp.toString))
+
+                }
+            }
+
+
+            //            var shardedChild = Project(nProjections, completedJoin)
+
+            var shardedChild = Project(projectArgs ++ nProjections, completedJoin)
 
             var SortCols: Seq[SortColumn] = Nil
             var newCol: SortColumn = new SortColumn(Var(WorldBits.columnName), true)
@@ -911,38 +669,496 @@
             sortCols.map { col =>
               SortCols :+= col
             }
+
             (
-              Sort(SortCols, newChild), nonDeterministicInput
+              Sort(SortCols, shardedChild), nonDeterministicInput, "IL"
             )
 
           }
 
 
-        }
-
-
-        case Limit(offset, count, oldChild) => {
-          limit = true
-          val (newChild, nonDeterministicInput) = compileHeuristicHybrid(oldChild, db)
-          limit = false
-          var projectArgs = newChild.columnNames.map { cols =>
-            ProjectArg(cols, Var(cols))
+        } else {
+          var SortCols: Seq[SortColumn] = Nil
+          var newCol: SortColumn = new SortColumn(Var(WorldBits.columnName), true)
+          SortCols :+= newCol
+          sortCols.map { col =>
+            SortCols :+= col
           }
-          val sampleShards = (0 until 10).map { i =>
-            Project(projectArgs, Limit(offset, count, Select(
-              Comparison(Cmp.Eq, Var(WorldBits.columnName), IntPrimitive(Math.pow(2, i).toLong))
-              , Project(projectArgs, newChild))))
-          }
-
-
           (
-            OperatorUtils.makeUnion(sampleShards), nonDeterministicInput
+            Sort(SortCols, newChild), nonDeterministicInput, "IL"
           )
 
         }
-        case (LeftOuterJoin(_, _, _) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _)) =>
-          throw new RAException("Tuple-Bundler presently doesn't support LeftOuterJoin, Sort, or Limit (probably need to resort to 'Long' evaluation)")
+
+
       }
+
+
+      case Limit(offset, count, oldChild) => {
+        val (newChild, nonDeterministicInput, mode) = compileHeuristicHybrid(oldChild, db, queueOfApproaches)
+        var qmode = queueOfApproaches.dequeue().mode;
+
+        (
+          Limit(offset, count, newChild), nonDeterministicInput, mode
+        )
+
+      }
+      case (LeftOuterJoin(_, _, _) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _)) =>
+        throw new RAException("Tuple-Bundler presently doesn't support LeftOuterJoin, Sort, or Limit (probably need to resort to 'Long' evaluation)")
+    }
+  }
+
+}
+
+object ChooseApproaches {
+
+  var listOfJoins = ArrayBuffer[JoinInfo]()
+  var isILDecided: Boolean = false
+
+  def PopulateJoin(ex: Expression, query: Operator): (String, String, String, Boolean) = {
+    query match {
+      case (Table(_, _, _, _) | EmptyTable(_)) => {
+        ((query.asInstanceOf[Table]).getTableName, ex.toString(), (query.asInstanceOf[Table]).getAliasName, false)
+      }
+      case Project(columns, oldChild) => {
+        var (nameL, expL, aliasL, detL) = ("", "", "", false)
+
+        columns.map {
+          col =>
+            if (ex.toString.equals(col.getName)) {
+
+              var (name, exp, alias, det) =
+                if (CTables.isProbabilistic(col.getRHSExpression))
+                  PopulateJoin(ex, oldChild)
+                else
+                  PopulateJoin(col.getRHSExpression, oldChild)
+              nameL = name
+              expL = exp
+              aliasL = alias
+              if (!det) {
+                det = CTables.isProbabilistic(col.getRHSExpression)
+              }
+              detL = det
+            }
+        }
+
+        (nameL, expL, aliasL, detL)
+
+      }
+
+      case Select(condition, oldChild) => {
+
+        (PopulateJoin(ex, oldChild))
+      }
+      case Join(lhsOldChild, rhsOldChild) => {
+        var found = false
+        var (nameL, expL, aliasL, detL) = ("", "", "", false)
+        var projectArgs = lhsOldChild.columnNames.map { cols =>
+          ProjectArg(cols, Var(cols))
+        }
+        projectArgs.map { col =>
+
+          if (ex.toString.equals(col.getName)) {
+            lhsOldChild match {
+              case Project(columns, oldChildLHS) => {
+
+                found = true
+                var (name, exp, alias, det) = PopulateJoin(col.getRHSExpression, oldChildLHS)
+                nameL = name
+                expL = exp
+                aliasL = alias
+                detL = det
+              }
+            }
+
+          }
+        }
+        if (!found) {
+          var projectArgs = rhsOldChild.columnNames.map { cols =>
+            ProjectArg(cols, Var(cols))
+          }
+          projectArgs.map { col =>
+            if (ex.toString.equals(col.getName)) {
+              rhsOldChild match {
+                case Project(columns, oldChildRHS) => {
+                  var (name, exp, alias, det) = PopulateJoin(col.getRHSExpression, oldChildRHS)
+                  nameL = name
+                  expL = exp
+                  aliasL = alias
+                  detL = det
+                }
+              }
+
+            }
+          }
+
+        }
+
+        (nameL, expL, aliasL, detL)
+      }
+      case Union(lhsOldChild, rhsOldChild) => {
+        //var name = ""
+        //var exp = ""
+        var found = false
+        var (nameL, expL, aliasL, detL) = ("", "", "", false)
+        var projectArgs = lhsOldChild.columnNames.map { cols =>
+          ProjectArg(cols, Var(cols))
+        }
+        projectArgs.map { col =>
+          if (ex.toString.equals(col.getName)) {
+            lhsOldChild match {
+              case Project(columns, oldChildLHS) => {
+                found = true
+                var (name, exp, alias, det) = PopulateJoin(col.getRHSExpression, oldChildLHS)
+                nameL = name
+                expL = exp
+                aliasL = alias
+                detL = det
+              }
+            }
+
+          }
+        }
+        if (!found) {
+          var projectArgs = rhsOldChild.columnNames.map { cols =>
+            ProjectArg(cols, Var(cols))
+          }
+          projectArgs.map { col =>
+            if (ex.toString.equals(col.getName)) {
+              rhsOldChild match {
+                case Project(columns, oldChildRHS) => {
+                  found = true
+                  var (name, exp, alias, det) = PopulateJoin(col.getRHSExpression, oldChildRHS)
+                  nameL = name
+                  expL = exp
+                  aliasL = alias
+                  detL = det
+                }
+              }
+
+            }
+          }
+
+
+        }
+        (nameL, expL, aliasL, detL)
+
+      }
+
+      case Aggregate(gbColumns, aggColumns, oldChild) => {
+        (PopulateJoin(ex, oldChild))
+
+
+      }
+      case View(_, query, _) => {
+        (PopulateJoin(ex, query))
+
+
+      }
+
+    }
+  }
+
+
+  def DetermineJoins(condition: Expression, query: Operator) {
+    condition match {
+      case p: PrimitiveValue => p
+
+      case Arithmetic(op, lhs, rhs) => {
+        DetermineJoins(lhs, query)
+        DetermineJoins(rhs, query)
+      }
+      case Comparison(op, lhs, rhs) => {
+        var isJoin = false
+        lhs match {
+          case Var(_) => isJoin = true
+        }
+        rhs match {
+          case Var(_) =>
+          case (_) => isJoin = false
+        }
+        if (isJoin) {
+          val (lhstable, lhsexp, lhsAlias, lhsnondet) = PopulateJoin(lhs, query)
+          val (rhstable, rhsexp, rhsAlias, rhsnondet) = PopulateJoin(rhs, query)
+          //println(lhstable+" "+ rhstable+" "+ lhsexp+" "+ rhsexp+" "+lhsAlias+" "+ rhsAlias+" "+ lhsnondet+" "+ rhsnondet)
+          val joininfo = new JoinInfo(lhstable, rhstable, lhsexp, rhsexp, lhsAlias, rhsAlias, lhsnondet, rhsnondet)
+          listOfJoins += joininfo
+          return
+        }
+      }
+
     }
 
   }
+
+  def isNonDeterministicJoinPresent: Boolean = {
+    var isNonDeterministic: Boolean = false
+    listOfJoins.map {
+      join =>
+        if (join.getNonDet1 || join.getNonDet2) {
+          isNonDeterministic = true
+        }
+    }
+    return isNonDeterministic
+  }
+
+  def changeAllToPureIL(queueOfApproaches: mutable.Queue[Approaches]) = {
+    if (!isILDecided) {
+      var sz = queueOfApproaches.size
+      while (sz > 0) {
+        queueOfApproaches += new Approaches(queueOfApproaches.dequeue().function, "IL")
+        sz = sz - 1
+      }
+      isILDecided = true
+    }
+  }
+
+  def CheckExpression(ex: Expression, query: Operator): (String) = {
+
+
+    query match {
+
+      case (Table(_, _, _, _) | EmptyTable(_)) => {
+
+        var schema = (query.asInstanceOf[Table]).getSchema
+        println((query.asInstanceOf[Table]).getAliasName)
+        schema.map {
+          col =>
+            if (ex.toString.contains(col._1)) {
+              return col._1
+            }
+        }
+        (ex.toString())
+      }
+
+      case Project(columns, oldChild) => {
+
+        var (nameL) = ("")
+
+        columns.map {
+          col =>
+            if (ex.toString.equals(col.getName)) {
+
+              var (name) =
+                if (CTables.isProbabilistic(col.getRHSExpression))
+                  CheckExpression(ex, oldChild)
+                else
+                  CheckExpression(col.getRHSExpression, oldChild)
+              nameL = name
+
+            }
+        }
+
+        (nameL)
+
+      }
+
+      case Select(condition, oldChild) => {
+
+        (CheckExpression(ex, oldChild))
+      }
+
+
+      case Join(lhsOldChild, rhsOldChild) => {
+        var found = false
+        var (nameL) = ("")
+        var projectArgs = lhsOldChild.columnNames.map { cols =>
+          ProjectArg(cols, Var(cols))
+        }
+        projectArgs.map { col =>
+
+          if (ex.toString.equals(col.getName)) {
+            lhsOldChild match {
+              case Project(columns, oldChildLHS) => {
+
+                found = true
+                var (name) = CheckExpression(col.getRHSExpression, oldChildLHS)
+                nameL = name
+
+              }
+            }
+
+          }
+        }
+        if (!found) {
+          var projectArgs = rhsOldChild.columnNames.map { cols =>
+            ProjectArg(cols, Var(cols))
+          }
+          projectArgs.map { col =>
+            if (ex.toString.equals(col.getName)) {
+              rhsOldChild match {
+                case Project(columns, oldChildRHS) => {
+                  var (name) = CheckExpression(col.getRHSExpression, oldChildRHS)
+                  nameL = name
+                }
+              }
+
+            }
+          }
+
+        }
+
+        (nameL)
+      }
+
+      case Union(lhsOldChild, rhsOldChild) => {
+        //var name = ""
+        //var exp = ""
+        var found = false
+        var (nameL) = ("")
+        var projectArgs = lhsOldChild.columnNames.map { cols =>
+          ProjectArg(cols, Var(cols))
+        }
+        projectArgs.map { col =>
+          if (ex.toString.equals(col.getName)) {
+            lhsOldChild match {
+              case Project(columns, oldChildLHS) => {
+                found = true
+                var (name) = CheckExpression(col.getRHSExpression, oldChildLHS)
+                nameL = name
+
+              }
+            }
+
+          }
+        }
+        if (!found) {
+          var projectArgs = rhsOldChild.columnNames.map { cols =>
+            ProjectArg(cols, Var(cols))
+          }
+          projectArgs.map { col =>
+            if (ex.toString.equals(col.getName)) {
+              rhsOldChild match {
+                case Project(columns, oldChildRHS) => {
+                  found = true
+                  var (name) = CheckExpression(col.getRHSExpression, oldChildRHS)
+                  nameL = name
+
+                }
+              }
+
+            }
+          }
+
+
+        }
+        (nameL)
+
+      }
+
+      case Aggregate(gbColumns, aggColumns, oldChild) => {
+        (CheckExpression(ex, oldChild))
+
+
+      }
+      case View(_, query, _) => {
+        (CheckExpression(ex, query))
+
+      }
+
+
+    }
+  }
+
+
+  def populateQueue(queueOfApproaches: mutable.Queue[Approaches], query: Operator): Unit = {
+
+    if (CTables.isDeterministic(query)) {
+      if (isNonDeterministicJoinPresent) {
+        changeAllToPureIL(queueOfApproaches)
+        queueOfApproaches += new Approaches("Projection", "IL")
+      }
+      else {
+        queueOfApproaches += new Approaches("Projection", "N")
+      }
+      //      queueOfApproaches += new Approaches("Projection", "N")
+      return
+    }
+    query match {
+      case Project(columns, oldChild) => {
+        populateQueue(queueOfApproaches, oldChild)
+        if (isNonDeterministicJoinPresent) {
+          changeAllToPureIL(queueOfApproaches)
+          queueOfApproaches += new Approaches("Projection", "IL")
+        }
+        else {
+          queueOfApproaches += new Approaches("Projection", "N")
+        }
+      }
+
+      case Select(condition, oldChild) => {
+        DetermineJoins(condition, query)
+        populateQueue(queueOfApproaches, oldChild)
+        if (isNonDeterministicJoinPresent) {
+          changeAllToPureIL(queueOfApproaches)
+          queueOfApproaches += new Approaches("Selection", "IL")
+        }
+        else {
+          queueOfApproaches += new Approaches("Selection", "N")
+        }
+      }
+
+      case Join(lhsOldChild, rhsOldChild) => {
+        populateQueue(queueOfApproaches, lhsOldChild)
+        populateQueue(queueOfApproaches, rhsOldChild)
+        if (isNonDeterministicJoinPresent) {
+          changeAllToPureIL(queueOfApproaches)
+          queueOfApproaches += new Approaches("join", "IL")
+        }
+        else {
+          queueOfApproaches += new Approaches("join", "TB")
+        }
+
+      }
+
+      case Union(lhsOldChild, rhsOldChild) => {
+        populateQueue(queueOfApproaches, lhsOldChild)
+        populateQueue(queueOfApproaches, rhsOldChild)
+        if (isNonDeterministicJoinPresent) {
+          changeAllToPureIL(queueOfApproaches)
+          queueOfApproaches += new Approaches("union", "IL")
+        }
+        else {
+          queueOfApproaches += new Approaches("union", "N")
+        }
+      }
+
+      case Aggregate(gbColumns, aggColumns, oldChild) => {
+        populateQueue(queueOfApproaches, oldChild)
+        if (isNonDeterministicJoinPresent) {
+          changeAllToPureIL(queueOfApproaches)
+          queueOfApproaches += new Approaches("aggregate", "IL")
+        }
+        else {
+          //check nondeterministic set for tb or il
+          queueOfApproaches += new Approaches("aggregate", "N")
+        }
+      }
+
+      // We don't handle materialized tuple bundles (at the moment)
+      // so give up and drop the view.
+      case View(_, query, _) => populateQueue(queueOfApproaches, query)
+
+      case Sort(sortCols, oldChild) => {
+        populateQueue(queueOfApproaches, oldChild)
+        queueOfApproaches += new Approaches("sort", "N")
+      }
+
+
+      case Limit(offset, count, oldChild) => {
+        populateQueue(queueOfApproaches, oldChild)
+        queueOfApproaches += new Approaches("Limit", "N")
+      }
+      case (LeftOuterJoin(_, _, _) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _)) =>
+        throw new RAException("Tuple-Bundler presently doesn't support LeftOuterJoin, Sort, or Limit (probably need to resort to 'Long' evaluation)")
+    }
+  }
+
+
+  def getQ(queryRaw: Operator): Queue[Approaches] = {
+    var approaches = new Queue[Approaches]
+    populateQueue(approaches, queryRaw)
+
+    (approaches)
+  }
+}

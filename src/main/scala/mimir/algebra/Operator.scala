@@ -133,7 +133,7 @@ case class AggFunction(function: String, distinct: Boolean, args: Seq[Expression
   override def toString = (alias + " <= " + function.toString + "(" + (if(distinct){"DISTINCT "}else{""}) + args.map(_.toString).mkString(", ") + ")")
   def getFunctionName() = function
   def getColumnNames() = args.map(x => x.toString).mkString(", ")
-  def getAlias() = alias.toString
+
 }
 
 @SerialVersionUID(100L)
@@ -313,7 +313,7 @@ case class Table(name: String,
   extends Operator
 {
   def getTableName = (name)
-  def getAlias = (alias)
+  def getAliasName = (alias)
   def getSchema = (sch)
   def toString(prefix: String) =
     prefix + name + "(" + (

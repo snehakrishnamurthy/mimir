@@ -56,10 +56,13 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
     query = compiled
 
     query = db.views.resolve(query)
-    //println(query)
+    println(queryRaw.columnNames)
+    println()
+    println(query.columnNames)
     (
       query,
-      TupleBundle.splitColumnNames(queryRaw.columnNames, nonDeterministicColumns, seeds.length),
+      query.columnNames,
+      //TupleBundle.splitColumnNames(queryRaw.columnNames, nonDeterministicColumns, seeds.length),
       (nonDeterministicColumns, provenanceCols)
     )
   }
@@ -432,11 +435,28 @@ class TupleBundle(seeds: Seq[Long] = (0l until 10l).toSeq)
 
       }
 
+      case Sort(sortCols,oldChild)=>{
+        //Sort only for certain orderby columns. For uncertain resort to Interleave/Naive mode
+        val (newChild, nonDeterministicInput) = compileFlat(oldChild, models,db)
+        (
+          Sort(sortCols,newChild),nonDeterministicInput
+        )
+
+      }
+
+      case Limit(offset, count, oldChild) => {
+        val (newChild, nonDeterministicInput) = compileFlat(oldChild, models,db)
+        (
+          Limit(offset, count, newChild), nonDeterministicInput
+        )
+
+      }
+
       // We don't handle materialized tuple bundles (at the moment)
       // so give up and drop the view.
       case View(_, query, _) =>  compileFlat(query, models,db)
 
-      case ( Sort(_,_) | Limit(_,_,_) | LeftOuterJoin(_,_,_) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _) ) =>
+      case ( LeftOuterJoin(_,_,_) | Annotate(_, _) | ProvenanceOf(_) | Recover(_, _) ) =>
         throw new RAException("Tuple-Bundler presently doesn't support LeftOuterJoin, Sort, or Limit (probably need to resort to 'Long' evaluation)")
     }
   }

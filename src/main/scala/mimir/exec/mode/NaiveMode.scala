@@ -42,7 +42,6 @@ class NaiveMode (seeds: Seq[Long] = (0l until 10l).toSeq)
     val (compiled, nonDeterministicColumns) = compileNaive(query,db)
     query = compiled
     query = db.views.resolve(query)
-    println(query)
     (
       query,
       query.columnNames,
