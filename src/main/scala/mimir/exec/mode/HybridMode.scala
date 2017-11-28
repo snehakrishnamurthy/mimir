@@ -21,7 +21,7 @@ import scala.collection.mutable
 import scala.collection.mutable.{ArrayBuffer, Queue,Stack}
 
 
-class HybridMode(seeds: Seq[Long] = (0l until 10l).toSeq, stack: scala.collection.mutable.Stack[String])
+class HybridMode(seeds: Seq[Long] = (0l until 10l).toSeq, stack: scala.collection.mutable.Stack[String]= Stack())
   extends CompileMode[SampleResultIterator]
     with LazyLogging {
   var limit = false
@@ -40,7 +40,6 @@ class HybridMode(seeds: Seq[Long] = (0l until 10l).toSeq, stack: scala.collectio
     val (compiled, nonDeterministicColumns, mode) = compileHeuristicHybrid(query, db, stack)
     query = compiled
     query = db.views.resolve(query)
-    println(query)
     (
       query,
       query.columnNames,
