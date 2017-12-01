@@ -217,7 +217,6 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
     val (queryString, idx) = config
     s"Query Lens ($idx): ${queryString}" >> {
       implicit ee: ExecutionEnv =>
-        upTo(timeout){
           try {
             println(s"GUESS QUERY: \n$queryString")
             val ((rows, backendTime), totalTime) = time {
@@ -235,7 +234,6 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
               ko
             }
           }
-        }
     }
   }
 
@@ -245,7 +243,6 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
     val (queryString, idx) = config
     s"Sample From Lens ($idx): ${queryString}" >> {
       implicit ee: ExecutionEnv =>
-        upTo(timeout){
           try {
             println(s"SAMPLE QUERY $idx:\n$queryString")
             val ((rows, backendTime), totalTime) = time {
@@ -272,7 +269,6 @@ abstract class VLDB2017TimingTest(dbName: String, config: Map[String,String])
               ko
             }
           }
-        }
     }
   }
 

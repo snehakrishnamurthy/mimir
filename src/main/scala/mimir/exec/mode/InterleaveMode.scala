@@ -59,6 +59,7 @@ class InterleaveMode(seeds: Seq[Long] = (0l until 10l).toSeq)
     val (compiled, nonDeterministicColumns) = compileInterleaved(query, db)
     query = compiled
     query = db.views.resolve(query)
+    println(query)
     (
       query,
       //TO-DO check if this is right

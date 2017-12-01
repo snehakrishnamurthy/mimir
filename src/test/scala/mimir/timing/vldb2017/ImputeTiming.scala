@@ -19,7 +19,7 @@ import net.sf.jsqlparser.statement.Statement
 import net.sf.jsqlparser.statement.select.{FromItem, PlainSelect, Select, SelectBody}
 
 object ImputeTiming
-  extends VLDB2017TimingTest("tpch10_tpch_UC1", Map("reset" -> "NO", "inline" -> "YES"))//, "initial_db" -> "test/tpch-impute-1g.db"))
+  extends VLDB2017TimingTest("tpch50_tpch_UC1", Map("reset" -> "NO", "inline" -> "YES"))//, "initial_db" -> "test/tpch-impute-1g.db"))
   with BeforeAll
 {
 
@@ -45,8 +45,9 @@ object ImputeTiming
   }
 
   val relevantTables = Seq(
-    ("LINEITEM", Seq("linestatus","discount","orderkey")),
-    ("ORDERS", Seq("custkey"))
+    //("LINEITEM", Seq("linestatus","discount","orderkey")),
+    ("LINEITEM", Seq("discount"))
+    //("ORDERS", Seq("custkey"))
 //    ("LINEITEM", Seq("shipdate")),
 //    ("ORDERS", Seq("orderdate"))
   )
@@ -68,10 +69,29 @@ object ImputeTiming
 
         val TPCHQueries =
           Seq(
-            //
             s"""
-            select l.orderkey from lineitem_run_$i as l where l.orderkey>599000 order by l.tax;
+            select AVG(l.quantity) from lineitem_run_$i as l,part as p,supplier s,orders o 
+            where l.partkey = p.partkey and s.suppkey = l.suppkey and o.orderdate = l.shipdate and p.mfgr = 'Manufacturer#1' and l.discount=0.02 and l.linestatus = 'F' and o.orderkey >85000 and s.nationkey < 15 group by l.tax;
+            """
+            /*
+            s"""
+            select AVG(l.quantity) from lineitem_run_$i as l,part as p where l.partkey = p.partkey and p.mfgr = 'Manufacturer#1' and l.discount=0.02 group by l.tax;
+           """,
+           s"""
+           select * from lineitem_run_1;
            """
+           ,
+           s"""
+           select AVG(l.quantity) from lineitem_run_$i as l,part as p where l.partkey = p.partkey and p.mfgr = 'Manufacturer#1' and l.discount=0.02 group by l.linestatus;
+           """
+           ,
+           s"""
+           select l.orderkey from lineitem_run_$i as l,part as p where l.partkey = p.partkey and p.mfgr = 'Manufacturer#1' and l.discount=0.02 order by l.orderkey;
+           """
+           ,
+           s"""
+           select p.partkey, l.orderkey from lineitem_run_$i as l,part as p where l.partkey = p.partkey and p.mfgr = 'Manufacturer#1' and l.discount=0.02 order by p.partkey;
+           """*/
             //   -- TPC-H Query 3
             //   SELECT o.orderkey,
             //          o.orderdate,
